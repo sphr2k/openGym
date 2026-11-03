@@ -131,19 +131,23 @@ async function missing(p,req){
   }
   return json({missing:absent,usage:usage(p)});
 }
-async function sweep(p,req){
-  const parsed=await jsonBody(req);if(parsed.error)return parsed.error;
+export async function garbageCollect(p,graceMs){
   if(p.mediaSweepRunning)return err(429,"busy",{retryAfter:5});
   const {state,unreadable}=p.current();
   if(unreadable||!state)return json({removed:0,freedBytes:0,usage:usage(p)});
   p.mediaSweepRunning=true;
   let removed=0,freedBytes=0;
   try{
-    const refs=referencedHashes(state);
-    for(const f of p.sql.exec("SELECT hash,size FROM media_files WHERE status='ready'").toArray()){
+    const refs=referencedHashes(state),now=Date.now();
+    for(const f of p.sql.exec("SELECT hash,size,unreferenced_since FROM media_files WHERE status='ready'").toArray()){
       if(refs.has(f.hash)){
-        p.sql.exec("UPDATE media_files SET unreferenced_since=NULL WHERE hash=?",f.hash);continue;
+        if(f.unreferenced_since!==null)p.sql.exec("UPDATE media_files SET unreferenced_since=NULL WHERE hash=?",f.hash);
+        continue;
       }
+      if(f.unreferenced_since===null){
+        p.sql.exec("UPDATE media_files SET unreferenced_since=? WHERE hash=?",now,f.hash);
+        if(graceMs>0)continue;
+      }else if(graceMs>0 && now-Number(f.unreferenced_since)<graceMs)continue;
       p.sql.exec("UPDATE media_files SET status='deleting' WHERE hash=? AND status='ready'",f.hash);
       try{
         await p.env.MEDIA.delete(key(p,f.hash));
@@ -157,6 +161,22 @@ async function sweep(p,req){
     return json({removed,freedBytes,usage:usage(p)});
   }finally{p.mediaSweepRunning=false;}
 }
+export async function scheduleGarbageCollection(p){
+  if(!p.env.MEDIA||typeof p.ctx.storage.setAlarm!=="function")return;
+  const entry=p.sql.exec("SELECT MIN(unreferenced_since) AS next FROM media_files WHERE status='ready' AND unreferenced_since IS NOT NULL").toArray()[0];
+  if(entry.next===null){
+    if(typeof p.ctx.storage.deleteAlarm==="function")await p.ctx.storage.deleteAlarm();
+    return;
+  }
+  const due=Number(entry.next)+limits(p.env).gcGraceDays*86400000;
+  // A profile with no snapshot is never assumed empty: keep files, retry later.
+  const safeDelay=p.current().state?10000:6*60*60*1000;
+  await p.ctx.storage.setAlarm(Math.max(Date.now()+safeDelay,due));
+}
+async function sweep(p,req){
+  const parsed=await jsonBody(req);if(parsed.error)return parsed.error;
+  return garbageCollect(p,0);
+}
 export async function mediaRequest(p,req){
   const path=new URL(req.url).pathname,method=req.method;
   if(!limits(p.env).enabled)return json({error:"not found"},404);
@@ -166,4 +186,26 @@ export async function mediaRequest(p,req){
   if(path==="/api/media/missing"&&method==="POST")return missing(p,req);
   if(path==="/api/media/sweep"&&method==="POST")return sweep(p,req);
   return json({error:"not found"},404);
+}
+
+
+/** Idempotent profile purge, called only after AccountDO revoked all credentials.
+ * Deletes R2 first, then SQLite. A retry can safely continue after interruption.
+ */
+export async function deleteAllProfileData(p){
+  const name=p.ctx.id?.name;
+  if(typeof name!=="string"||!name.startsWith("profile:"))throw Error("missing profile identity");
+  const prefix="users/"+name.slice(8)+"/media/";
+  // Deleting the first page repeatedly avoids cursor invalidation during deletion.
+  for(let i=0;i<10000;i++){
+    const page=await p.env.MEDIA.list({prefix,limit:1000});
+    if(!page.objects.length)break;
+    await p.env.MEDIA.delete(page.objects.map(o=>o.key));
+    if(i===9999)throw Error("profile media cleanup exceeded safety limit");
+  }
+  p.ctx.storage.transactionSync(()=>{
+    p.sql.exec("DELETE FROM media_files");
+    p.sql.exec("DELETE FROM document");
+  });
+  return json({ok:true});
 }

@@ -53,3 +53,29 @@ test("auth token does not accept forged signatures or browser cookies as bearer"
   assert.equal((await a.fetch(req("/api/me","GET",undefined,{cookie:"__Host-gymsid="+token.slice(0,-1)+"!"}))).status,401);
   assert.equal((await a.fetch(req("/api/me","GET",undefined,{cookie:cookie+"; __Host-gymsid=other"}))).status,401);
 });
+
+test("account deletion revokes immediately and retries interrupted remote cleanup",async()=>{
+  const {ctx}=context();
+  const alarms=[];
+  ctx.storage.setAlarm=async at=>alarms.push(at);
+  let attempts=0,cleaned="";
+  const profile={fetch:async()=>{attempts++;if(attempts===1)return new Response("failed",{status:503});cleaned="u1";return new Response('{"ok":true}',{headers:{"content-type":"application/json"}});}};
+  const a=new AccountDO(ctx,{PROFILES:{getByName:()=>profile}});
+  a.sql.exec("INSERT INTO users(id,name,created) VALUES ('u1','Account Owner','2026-11-03')");
+  a.sql.exec("INSERT INTO credentials(id,user_id,public_key,counter,transports,created,last_used) VALUES ('test','u1','fake',0,'[]','2026-11-03','2026-11-03')");
+  const user=a.queryOne("SELECT * FROM users WHERE id='u1'");
+  const bearer=await a.sign(user,"b");
+  const headers={authorization:"Bearer "+bearer};
+  const del=await parsed(await a.fetch(req("/api/account/delete","POST",{name:"Account Owner"},headers)));
+  assert.equal(del.status,200);
+  assert.equal(del.body.ok,true);
+  assert.equal(a.queryOne("SELECT id FROM users WHERE id='u1'"),null);
+  assert.equal(a.queryOne("SELECT id FROM credentials WHERE user_id='u1'"),null);
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,headers))).status,401);
+  assert.equal(a.queryOne("SELECT COUNT(*) AS n FROM pending_deletions").n,1);
+  assert.equal(alarms.length,1);
+  await a.alarm();
+  assert.equal(attempts,2);
+  assert.equal(cleaned,"u1");
+  assert.equal(a.queryOne("SELECT COUNT(*) AS n FROM pending_deletions").n,0);
+});

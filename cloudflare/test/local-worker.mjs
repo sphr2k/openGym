@@ -70,6 +70,21 @@ function ok(response,where) {
   return response.body;
 }
 
+function extraCredential(){
+  const {publicKey}=generateKeyPairSync("ec",{namedCurve:"prime256v1"});
+  const jk=publicKey.export({format:"jwk"}),raw=randomBytes(20),id=raw.toString("base64url");
+  const coseKey=cbor(new Map([
+    [1,2],[3,-7],[-1,1],[-2,Buffer.from(jk.x,"base64url")],[-3,Buffer.from(jk.y,"base64url")]
+  ]));
+  return {id,creation(challenge){
+    const len=Buffer.alloc(2);len.writeUInt16BE(raw.length);
+    const auth=Buffer.concat([rpHash,Buffer.from([0x45]),count(0),Buffer.alloc(16),len,raw,coseKey]);
+    return {id,rawId:id,type:"public-key",
+      response:{clientDataJSON:client("webauthn.create",challenge),
+      attestationObject:b64(cbor({fmt:"none",attStmt:{},authData:auth})),transports:["internal"]},
+      clientExtensionResults:{}};
+  }};
+}
 const username="WorkerIT-"+randomBytes(3).toString("hex");
 console.log("Health:",ok(await api("/api/health"),"health"));
 const opt=ok(await post("/api/register/options",{name:username}),"register/options");
@@ -115,6 +130,37 @@ assert.equal(lost.status,409);
 const reloaded=ok(await api("/api/data","GET",undefined,loginCookie),"data after native put");
 assert.equal(reloaded.state.workouts.length,2);
 
+// Exercise the real Settings -> Passkeys flow with a second authenticator.
+const passkeys0=ok(await api("/api/account/passkeys","GET",undefined,loginCookie),"passkeys initial");
+assert.equal(passkeys0.passkeys.length,1);
+assert.equal(passkeys0.lastWayIn,true);
+const forbidLast=await api("/api/account/passkeys?id="+encodeURIComponent(id),"DELETE",{},loginCookie);
+assert.equal(forbidLast.status,409);
+assert.equal(forbidLast.body.code,"last-way-in");
+const renamed=ok(await post("/api/account/passkeys/rename",{id,name:"Primary Key"},loginCookie),"rename passkey");
+assert.equal(renamed.passkeys[0].name,"Primary Key");
+const noProof=await post("/api/account/passkeys/options",{},loginCookie);
+assert.equal(noProof.status,403);
+const a2=extraCredential();
+const addOptions=ok(await post("/api/login/options",{}),"login options for add");
+const add=ok(await post("/api/account/passkeys/options",
+  {cid:addOptions.cid,credential:assertion(addOptions.options.challenge)},loginCookie),"add options");
+assert.equal(add.options.excludeCredentials.length,1);
+const verifiedAdd=ok(await post("/api/account/passkeys/verify",
+  {cid:add.cid,credential:a2.creation(add.options.challenge),name:"Backup Key"},loginCookie),"add verify");
+assert.equal(verifiedAdd.passkeys.length,2);
+assert.equal(verifiedAdd.lastWayIn,false);
+const addReplay=await post("/api/account/passkeys/verify",
+  {cid:add.cid,credential:a2.creation(add.options.challenge),name:"Backup Key"},loginCookie);
+assert.equal(addReplay.status,400);
+assert.equal(addReplay.body.code,"challenge-expired");
+const rmOptions=ok(await post("/api/login/options",{}),"login options for passkey removal");
+const removed=await api("/api/account/passkeys?id="+encodeURIComponent(a2.id),"DELETE",
+  {cid:rmOptions.cid,credential:assertion(rmOptions.options.challenge)},loginCookie);
+assert.equal(removed.status,200);
+assert.equal(removed.body.passkeys.length,1);
+console.log("Live passkey management OK: rename, step-up, add, replay denial, last-key protection, remove");
+
 const image=Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0]),randomBytes(120)]);
 const imageHash=hash(image).toString("hex");
 const apiMedia=async (method,hashValue,content=image,mime="image/jpeg",headers=loginCookie)=>
@@ -155,4 +201,19 @@ assert.deepEqual(ok(await post("/api/media/missing",{hashes:[imageHash,extraHash
 assert.equal((await apiMedia("GET",imageHash)).status,200);
 assert.equal((await apiMedia("GET",extraHash)).status,404);
 console.log("Live R2 media integration OK: missing, upload, integrity, replay, quota accounting, scoped GET, reference-aware sweep");
+
+// Account deletion uses the native app's bearer credential only after local biometric
+// confirmation; the browser's cookie needs a fresh passkey step-up.
+const wrongDelete=await post("/api/account/delete",{name:"not-the-owner"},bearer);
+assert.equal(wrongDelete.status,400);
+assert.equal(wrongDelete.body.code,"confirm-name");
+const unprovedBrowser=await post("/api/account/delete",{name:username},loginCookie);
+assert.equal(unprovedBrowser.status,403);
+assert.equal(unprovedBrowser.body.code,"passkey-required");
+const deleted=ok(await post("/api/account/delete",{name:username},bearer),"native account delete");
+assert.equal(deleted.ok,true);
+assert.equal((await api("/api/me","GET",undefined,loginCookie)).status,401);
+assert.equal((await api("/api/data","GET",undefined,bearer)).status,401);
+assert.equal((await api("/api/media/"+imageHash,"GET",undefined,bearer)).status,401);
+console.log("Account deletion OK: name confirmation, fresh browser proof, bearer delete, credentials revoked");
 console.log("Live Worker integration OK: register, WebAuthn, cookie, pairing, bearer, PUT, 409, reload");

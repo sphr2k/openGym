@@ -1,5 +1,5 @@
 import { stampPut } from "../../api/sync-stamps.js";
-import { initMedia, noteReferences, mediaRequest } from "./media.js";
+import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, garbageCollect, scheduleGarbageCollection } from "./media.js";
 import { forClient, json, jsonBody, randomHex, validateProfile } from "./protocol.js";
 
 const WID_KEEP = 50;
@@ -87,15 +87,30 @@ export class ProfileDO {
 
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    if (request.method==="POST"&&path==="/_internal/delete-all"){
+      return deleteAllProfileData(this);
+    }
     if (request.method === "GET" && (path === "/api/data" || path === "/api/data/rev")) {
       return this.read(path);
     }
     if (request.method === "PUT" && path === "/api/data") {
       const parsed = await jsonBody(request);
       if (parsed.error) return parsed.error;
-      return this.write(parsed.value);
+      const response=this.write(parsed.value);
+      if(response.ok)await scheduleGarbageCollection(this);
+      return response;
     }
-    if (path.startsWith("/api/media/")) return mediaRequest(this,request);
+    if (path.startsWith("/api/media/")){
+      const response=await mediaRequest(this,request);
+      if(response.ok && request.method!=="GET")await scheduleGarbageCollection(this);
+      return response;
+    }
     return json({ error: "not found" }, 404);
+  }
+
+  async alarm(){
+    const grace=Math.max(0,Number(this.env.MEDIA_GC_GRACE_DAYS??14))*86400000;
+    await garbageCollect(this,grace);
+    await scheduleGarbageCollection(this);
   }
 }

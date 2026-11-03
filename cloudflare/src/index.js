@@ -15,6 +15,11 @@ const ACCOUNT_ROUTES = new Set([
   "POST /api/pair/redeem",
   "GET /api/me",
   "GET /api/account/passkeys",
+  "POST /api/account/passkeys/options",
+  "POST /api/account/passkeys/verify",
+  "POST /api/account/passkeys/rename",
+  "DELETE /api/account/passkeys",
+  "POST /api/account/delete",
   "POST /api/logout",
   "POST /api/logout/all"
 ]);

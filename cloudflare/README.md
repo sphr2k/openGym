@@ -7,14 +7,17 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - WebAuthn registration and login against persistent SQLite AccountDO
 - Cookie sessions, bearer sessions and session-version invalidation
 - Fresh-passkey-proof phone pairing, one-use/expiring pairing codes
+- Second passkey creation/rename/removal with actual WebAuthn assertion and last-way-in protection
+- Account deletion: immediate revocation plus idempotent profile/media deletion, with durable retry alarms
 - GET /api/me, GET /api/config, GET /api/health, GET /api/account/passkeys
 - GET /api/data, GET /api/data/rev, PUT /api/data and native background GET /api/nudge-check
 - Original state stamps and revision/write-ID conflict contract (api/sync-stamps.js)
 - Actual Vite UI and 13k public exercise-media assets served via Workers Static Assets
 - Request-origin filtering and native Capacitor preflight
-- Unit tests against real SQLite and full local Wrangler/WebAuthn/paired-client integration test
+- SQLite unit tests for authentication, media retention, failed cleanup/retries, quota and user isolation
+- Full local Wrangler/WebAuthn/paired-client integration test including R2 and account deletion
 
-**Not production-ready**: custom media uploads/R2 APIs, additional account/passkey management, admin, device recovery, all coach/integration/push/notification APIs and complete client route parity are not implemented yet. Missing optional routes return HTTP 404; media capability is **not advertised** in /api/config. No live deployment has been performed.
+**Not production-ready**: custom media uploads/R2 APIs, additional account/passkey management, admin, device recovery, all coach/integration/push/notification APIs and complete client route parity are not implemented yet. Missing optional routes return HTTP 404; media capability is **not advertised** in /api/config. No live production deployment has been performed. Further security and failure-mode testing is required.
 
 ## Local development
 
