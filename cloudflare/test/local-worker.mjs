@@ -161,6 +161,32 @@ assert.equal(removed.status,200);
 assert.equal(removed.body.passkeys.length,1);
 console.log("Live passkey management OK: rename, step-up, add, replay denial, last-key protection, remove");
 
+// Browser -> another browser device link, distinct from native mobile bearer pairing.
+const invalidLink=await post("/api/device-link/options",{code:"AAAA-BBBB-CCCC"});
+assert.equal(invalidLink.status,400);
+assert.equal(invalidLink.body.code,"link-invalid");
+const linkProof=ok(await post("/api/login/options",{}),"link proof options");
+const link=ok(await post("/api/account/device-link",
+  {cid:linkProof.cid,credential:assertion(linkProof.options.challenge)},loginCookie),"create device link");
+assert.match(link.code,/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/);
+assert.ok(link.expires>Date.now());
+const newBrowser=extraCredential();
+const linkOptions=ok(await post("/api/device-link/options",{code:link.code}),"redeem link options");
+assert.equal(linkOptions.id,user.id);
+assert.equal(linkOptions.name,username);
+const linked=await post("/api/device-link/verify",
+  {code:link.code,cid:linkOptions.cid,credential:newBrowser.creation(linkOptions.options.challenge),name:"Second Browser"});
+assert.equal(linked.status,200);
+assert.equal(linked.body.user.id,user.id);
+const newCookie=linked.headers.get("set-cookie").split(";")[0];
+assert.equal(ok(await api("/api/me","GET",undefined,{Cookie:newCookie}),"linked browser me").user.id,user.id);
+const linkReplay=await post("/api/device-link/options",{code:link.code});
+assert.equal(linkReplay.status,400);
+assert.equal(linkReplay.body.code,"link-invalid");
+const linkedKeys=ok(await api("/api/account/passkeys","GET",undefined,loginCookie),"linked passkeys");
+assert.equal(linkedKeys.passkeys.length,2);
+console.log("Live device-link OK: proof, 60-bit code, new WebAuthn registration, replay denial");
+
 const image=Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0]),randomBytes(120)]);
 const imageHash=hash(image).toString("hex");
 const apiMedia=async (method,hashValue,content=image,mime="image/jpeg",headers=loginCookie)=>

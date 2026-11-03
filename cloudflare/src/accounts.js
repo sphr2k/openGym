@@ -55,6 +55,7 @@ export class AccountDO {
     this.sql.exec("CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY,user_id TEXT NOT NULL,public_key TEXT NOT NULL,counter INTEGER NOT NULL,transports TEXT NOT NULL,created TEXT NOT NULL,last_used TEXT NOT NULL,name TEXT)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS tickets(id TEXT PRIMARY KEY,kind TEXT NOT NULL,payload TEXT NOT NULL,expires INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS pairings(code_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL,expires INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS device_links(hash TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, expires INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'link')");
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY,value TEXT NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS attempts(id TEXT PRIMARY KEY,n INTEGER NOT NULL,started INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS pending_deletions(uid TEXT PRIMARY KEY,created INTEGER NOT NULL,tries INTEGER NOT NULL DEFAULT 0)");
@@ -197,6 +198,20 @@ export class AccountDO {
     await this.retryDeleted();
   }
 
+  async deviceLinkHash(raw){
+    const clean=typeof raw==="string"?raw.toUpperCase().replace(/[^A-Z0-9]/g,""):"";
+    if(clean.length!==12)return null;
+    const digest=await crypto.subtle.digest("SHA-256",encode("opengym-link:"+clean));
+    return Buffer.from(digest).toString("hex");
+  }
+
+  async deviceLinkRecord(raw){
+    const hash=await this.deviceLinkHash(raw);
+    if(!hash)return null;
+    const link=this.queryOne("SELECT hash,user_id,expires,kind FROM device_links WHERE hash=?",hash);
+    return link && link.expires>Date.now()?link:null;
+  }
+
   async codeHash(code) {
     const digest = await crypto.subtle.digest("SHA-256", encode("opengym-pair:" + code));
     return Buffer.from(digest).toString("hex");
@@ -302,6 +317,70 @@ export class AccountDO {
       return json({token:await this.sign(user,"b"),user:ownerPublic(user)});
     }
 
+    if(route==="POST /api/device-link/options"){
+      if(this.rateLimit(req,"link-options",20))return json({error:"too many attempts"},429);
+      const link=await this.deviceLinkRecord(body.code);
+      const user=link && this.queryOne("SELECT * FROM users WHERE id=?",link.user_id);
+      if(!user||user.disabled)return json({error:"that code is wrong, used or expired",code:"link-invalid"},400);
+      const count=this.queryOne("SELECT COUNT(*) AS n FROM credentials WHERE user_id=?",user.id).n;
+      if(count>=MAX_PASSKEYS && link.kind!=="recovery")
+        return json({error:"a profile can have at most "+MAX_PASSKEYS+" passkeys",code:"passkey-limit"},409);
+      const options=await generateRegistrationOptions({
+        rpName:rp.rpName,rpID:rp.rpID,
+        userID:encode(user.id),userName:user.name,userDisplayName:user.name,
+        attestationType:"none",authenticatorSelection:{residentKey:"required",userVerification:"preferred"},
+        excludeCredentials:this.sql.exec("SELECT id,transports FROM credentials WHERE user_id=?",user.id).toArray()
+          .map(c=>({id:c.id,transports:JSON.parse(c.transports)}))
+      });
+      const cid=this.putTicket("link",{challenge:options.challenge,uid:user.id,hash:link.hash});
+      return json({cid,options,id:user.id,name:user.name,...(link.kind==="recovery"?{recovery:true}:{})});
+    }
+    if(route==="POST /api/device-link/verify"){
+      if(this.rateLimit(req,"link-verify",20))return json({error:"too many attempts"},429);
+      const link=await this.deviceLinkRecord(body.code);
+      if(!link)return json({error:"that code is wrong, used or expired",code:"link-invalid"},400);
+      const ticket=this.takeTicket(body.cid,"link");
+      if(!ticket||ticket.hash!==link.hash||ticket.uid!==link.user_id)
+        return json({error:"challenge expired, try again",code:"challenge-expired"},400);
+      let answer;
+      try{
+        answer=await verifyRegistrationResponse({
+          response:body.credential,expectedChallenge:ticket.challenge,
+          expectedOrigin:rp.origin,expectedRPID:rp.rpID,requireUserVerification:false
+        });
+      }catch{return json({error:"passkey verification failed",code:"verify-error"},400);}
+      if(!answer.verified)return json({error:"not verified"},400);
+      const newCredential=answer.registrationInfo.credential;
+      let accepted=null,failed=null;
+      this.ctx.storage.transactionSync(()=>{
+        const fresh=this.queryOne("SELECT user_id,expires,kind FROM device_links WHERE hash=?",link.hash);
+        const user=fresh && this.queryOne("SELECT * FROM users WHERE id=?",fresh.user_id);
+        if(!user||user.disabled||fresh.expires<Date.now()){
+          failed={error:"that code is wrong, used or expired",code:"link-invalid"};return;
+        }
+        const n=this.queryOne("SELECT COUNT(*) AS n FROM credentials WHERE user_id=?",user.id).n;
+        if(n>=MAX_PASSKEYS && fresh.kind!=="recovery"){
+          failed={error:"a profile can have at most "+MAX_PASSKEYS+" passkeys",code:"passkey-limit"};return;
+        }
+        if(this.queryOne("SELECT id FROM credentials WHERE id=?",newCredential.id)){
+          failed={error:"credential already registered",code:"credential-exists"};return;
+        }
+        if(n>=MAX_PASSKEYS && fresh.kind==="recovery"){
+          const oldest=this.queryOne("SELECT id FROM credentials WHERE user_id=? ORDER BY last_used,created LIMIT 1",user.id);
+          if(oldest)this.sql.exec("DELETE FROM credentials WHERE id=?",oldest.id);
+        }
+        const created=new Date().toISOString();
+        this.sql.exec("INSERT INTO credentials(id,user_id,public_key,counter,transports,created,last_used,name) VALUES (?,?,?,?,?,?,?,?)",
+          newCredential.id,user.id,Buffer.from(newCredential.publicKey).toString("base64url"),
+          newCredential.counter||0,JSON.stringify(transportsOf(body.credential?.response?.transports)),
+          created,created,passkeyName(body.name)||null);
+        this.sql.exec("DELETE FROM device_links WHERE hash=?",link.hash);
+        accepted=user;
+      });
+      if(failed)return json(failed,failed.code==="link-invalid"?400:409);
+      return json({user:ownerPublic(accepted)},200,cookieHeaders(await this.sign(accepted,"c"),rp.origin));
+    }
+
     const s = await this.authenticate(req);
     if (!s) return json({error:"not signed in"},401);
 
@@ -377,9 +456,26 @@ export class AccountDO {
         const count=this.queryOne("SELECT COUNT(*) AS n FROM credentials WHERE user_id=?",s.user.id).n;
         if(count<=1){refused={error:"this passkey is the only way into this profile",code:"last-way-in"};return;}
         this.sql.exec("DELETE FROM credentials WHERE id=? AND user_id=?",id,s.user.id);
+        this.sql.exec("DELETE FROM device_links WHERE user_id=?",s.user.id);
       });
       if(refused)return json(refused,409);
       return json({ok:true,...this.passkeyState(s.user)});
+    }
+    if(route==="POST /api/account/device-link"){
+      const n=this.queryOne("SELECT COUNT(*) AS n FROM credentials WHERE user_id=?",s.user.id).n;
+      if(n>=MAX_PASSKEYS)return json({error:"a profile can have at most "+MAX_PASSKEYS+" passkeys",code:"passkey-limit"},409);
+      const proof=await this.stepUp(body,s.user.id,rp);
+      if(proof.error)return proof.error;
+      if(!await this.authenticate(req))return json({error:"not signed in"},401);
+      const chars=Array.from(crypto.getRandomValues(new Uint8Array(12)),v=>CODE_ALPHABET[v%CODE_ALPHABET.length]).join("");
+      const code=chars.slice(0,4)+"-"+chars.slice(4,8)+"-"+chars.slice(8);
+      const hash=await this.deviceLinkHash(code);
+      const expires=Date.now()+10*60000;
+      this.ctx.storage.transactionSync(()=>{
+        this.sql.exec("DELETE FROM device_links WHERE user_id=?",s.user.id);
+        this.sql.exec("INSERT INTO device_links(hash,user_id,expires) VALUES (?,?,?)",hash,s.user.id,expires);
+      });
+      return json({code,expires});
     }
     if (route === "POST /api/pair/create") {
       // Do NOT mint an indefinite mobile bearer token from a stolen cookie alone.
@@ -412,6 +508,7 @@ export class AccountDO {
       this.ctx.storage.transactionSync(()=>{
         this.sql.exec("INSERT OR IGNORE INTO pending_deletions(uid,created) VALUES (?,?)",s.user.id,Date.now());
         this.sql.exec("DELETE FROM pairings WHERE user_id=?",s.user.id);
+        this.sql.exec("DELETE FROM device_links WHERE user_id=?",s.user.id);
         this.sql.exec("DELETE FROM credentials WHERE user_id=?",s.user.id);
         this.sql.exec("DELETE FROM users WHERE id=?",s.user.id);
       });
@@ -433,6 +530,7 @@ export class AccountDO {
     if (route === "POST /api/logout/all") {
       this.sql.exec("UPDATE users SET sv=sv+1 WHERE id=?",s.user.id);
       this.sql.exec("DELETE FROM pairings WHERE user_id=?",s.user.id);
+      this.sql.exec("DELETE FROM device_links WHERE user_id=?",s.user.id);
       const name = rp.origin.startsWith("https://") ? "__Host-gymsid" : "gymsid";
       return json({ok:true},200,{"Set-Cookie":name+"=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"});
     }

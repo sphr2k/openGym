@@ -33,6 +33,7 @@ export function limits(env={}) {
     videoMB: num("MEDIA_VIDEO_MAX_MB",40,0.001),
     videoSec: num("MEDIA_VIDEO_MAX_SEC",60,1),
     gcGraceDays: num("MEDIA_GC_GRACE_DAYS",14,0),
+    uploadsPerHour: Math.floor(num("MEDIA_UPLOADS_PER_HOUR",600,1)),
   };
 }
 export function mediaConfig(l){

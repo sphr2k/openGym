@@ -19,7 +19,9 @@
 - [x] Add/rename/remove passkeys with fresh WebAuthn assertion; protect last sign-in method
 - [x] Revoke credentials before account deletion, idempotent R2/SQLite cleanup with durable alarm retries
 - [x] Add per-user automatic R2 garbage collection with 14-day grace and manual immediate sweep
-- [ ] Implement device-link recovery, admin APIs, watch relay and optional notifications with full compatibility tests
+- [x] Preserve web-to-web device-link flow with one-use 60-bit code and atomic passkey creation
+- [x] Persist per-user media rate limits and test account deletion with in-flight uploads
+- [ ] Implement admin-generated recovery codes, admin APIs, watch relay and optional notifications with full compatibility tests
 - [ ] Frontend asset deployment with exercise catalogue
 - [ ] Test unmodified mobile client pairing and workout sync
 - [ ] Publish branch and draft PR, deployment/backup docs

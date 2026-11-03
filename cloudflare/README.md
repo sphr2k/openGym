@@ -8,7 +8,9 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - Cookie sessions, bearer sessions and session-version invalidation
 - Fresh-passkey-proof phone pairing, one-use/expiring pairing codes
 - Second passkey creation/rename/removal with actual WebAuthn assertion and last-way-in protection
+- Browser-to-browser device link (60-bit one-time code, 10-minute TTL, replay-safe registration)
 - Account deletion: immediate revocation plus idempotent profile/media deletion, with durable retry alarms
+- Persistent profile deletion tombstone blocks stale writes and in-flight R2 upload resurrection
 - GET /api/me, GET /api/config, GET /api/health, GET /api/account/passkeys
 - GET /api/data, GET /api/data/rev, PUT /api/data and native background GET /api/nudge-check
 - Original state stamps and revision/write-ID conflict contract (api/sync-stamps.js)

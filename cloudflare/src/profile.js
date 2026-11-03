@@ -1,5 +1,5 @@
 import { stampPut } from "../../api/sync-stamps.js";
-import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, garbageCollect, scheduleGarbageCollection } from "./media.js";
+import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, garbageCollect, scheduleGarbageCollection, profileDeleted } from "./media.js";
 import { forClient, json, jsonBody, randomHex, validateProfile } from "./protocol.js";
 
 const WID_KEEP = 50;
@@ -28,6 +28,7 @@ export class ProfileDO {
   }
 
   read(path) {
+    if(profileDeleted(this))return json({error:"profile removed",code:"profile-deleted"},410);
     const { state, rev, unreadable } = this.current();
     if (unreadable) return json({ error: "state unreadable" }, 503);
     if (path === "/api/data/rev") {
@@ -37,9 +38,11 @@ export class ProfileDO {
   }
 
   write(body) {
+    if(profileDeleted(this))return json({error:"profile removed",code:"profile-deleted"},410);
     if (this.mediaSweepRunning) return json({error:"media maintenance in progress"},503);
     // This closure is sync by design: serializable CAS + JSON commit in one DO.
     return this.ctx.storage.transactionSync(() => {
+      if(profileDeleted(this))return json({error:"profile removed",code:"profile-deleted"},410);
       const { state: cur, rev: curRev, unreadable } = this.current();
       if (unreadable) return json({ error: "state unreadable" }, 503);
       const next = clone(body.state);

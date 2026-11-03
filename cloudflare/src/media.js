@@ -23,6 +23,23 @@ export function referencedHashes(state){
 }
 export function initMedia(p){
   p.sql.exec("CREATE TABLE IF NOT EXISTS media_files (hash TEXT PRIMARY KEY, mime TEXT NOT NULL, size INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN ('reserved','ready','deleting')), token TEXT, expires INTEGER, unreferenced_since INTEGER)");
+  p.sql.exec("CREATE TABLE IF NOT EXISTS profile_lifecycle(key TEXT PRIMARY KEY,value INTEGER NOT NULL)");
+  p.sql.exec("CREATE TABLE IF NOT EXISTS media_throttle(kind TEXT PRIMARY KEY,count INTEGER NOT NULL,started INTEGER NOT NULL)");
+}
+export const profileDeleted=p=>!!p.sql.exec("SELECT value FROM profile_lifecycle WHERE key='deleted'").toArray()[0]?.value;
+const revoked=()=>json({error:"profile removed",code:"profile-deleted"},410);
+function takeRate(p,kind,max,windowMs){
+  return p.ctx.storage.transactionSync(()=>{
+    const now=Date.now();
+    const row=p.sql.exec("SELECT count,started FROM media_throttle WHERE kind=?",kind).toArray()[0];
+    if(!row||now-row.started>=windowMs){
+      p.sql.exec("INSERT INTO media_throttle(kind,count,started) VALUES (?,?,?) ON CONFLICT(kind) DO UPDATE SET count=excluded.count,started=excluded.started",kind,1,now);
+      return 0;
+    }
+    if(row.count>=max)return Math.max(1,Math.ceil((windowMs-(now-row.started))/1000));
+    p.sql.exec("UPDATE media_throttle SET count=count+1 WHERE kind=?",kind);
+    return 0;
+  });
 }
 const row=(p,h)=>p.sql.exec("SELECT * FROM media_files WHERE hash=?",h).toArray()[0]||null;
 const stats=p=>p.sql.exec("SELECT COALESCE(SUM(size),0) AS bytes, COUNT(*) AS count FROM media_files WHERE status='ready'").toArray()[0];
@@ -41,6 +58,7 @@ export function noteReferences(p,state){
 }
 function reserve(p,h,mime,size){
   return p.ctx.storage.transactionSync(()=>{
+    if(profileDeleted(p))return {deleted:true};
     p.sql.exec("DELETE FROM media_files WHERE status='reserved' AND expires<?",Date.now());
     const previous=row(p,h);
     if(previous?.status==="ready")return {previous};
@@ -92,11 +110,19 @@ async function upload(p,req,h){
     p.sql.exec("DELETE FROM media_files WHERE hash=? AND status='ready'",h);
     reservation=reserve(p,h,sniff.mime,bytes.length);
   }
+  if(reservation.deleted)return revoked();
   if(reservation.busy)return err(429,"busy",{retryAfter:5});
   if(reservation.quota)return err(413,"media-quota",{usedMB:Math.round(stats(p).bytes/104857.6)/10,quotaMB:l.quotaMB});
   if(!reservation.token)return json({error:"media reservation failed"},503);
   try{
     await p.env.MEDIA.put(key(p,h),bytes,{httpMetadata:{contentType:sniff.mime},customMetadata:{hash:h}});
+    if(profileDeleted(p)){
+      // An upload already in flight when the account was deleted must not
+      // resurrect bytes after the cleanup job has completed.
+      await p.env.MEDIA.delete(key(p,h));
+      p.sql.exec("DELETE FROM media_files WHERE hash=? AND status='reserved' AND token=?",h,reservation.token);
+      return revoked();
+    }
     const hasRef=referencedHashes(p.current().state).has(h);
     p.sql.exec("UPDATE media_files SET status='ready',mime=?,size=?,token=NULL,expires=NULL,unreferenced_since=? WHERE hash=? AND status='reserved' AND token=?",
       sniff.mime,bytes.length,hasRef?null:Date.now(),h,reservation.token);
@@ -178,13 +204,22 @@ async function sweep(p,req){
   return garbageCollect(p,0);
 }
 export async function mediaRequest(p,req){
+  if(profileDeleted(p))return revoked();
   const path=new URL(req.url).pathname,method=req.method;
   if(!limits(p.env).enabled)return json({error:"not found"},404);
   const m=/^\/api\/media\/([0-9a-f]{64})$/.exec(path);
   if(m&&method==="GET")return download(p,m[1]);
-  if(m&&method==="PUT")return upload(p,req,m[1]);
+  if(m&&method==="PUT"){
+    const wait=takeRate(p,"upload",limits(p.env).uploadsPerHour,3600000);
+    if(wait)return json({error:"too many uploads, try again later",code:"locked",retryAfter:wait},429,{"Retry-After":String(wait)});
+    return upload(p,req,m[1]);
+  }
   if(path==="/api/media/missing"&&method==="POST")return missing(p,req);
-  if(path==="/api/media/sweep"&&method==="POST")return sweep(p,req);
+  if(path==="/api/media/sweep"&&method==="POST"){
+    const wait=takeRate(p,"sweep",10,3600000);
+    if(wait)return json({error:"too many uploads, try again later",code:"locked",retryAfter:wait},429,{"Retry-After":String(wait)});
+    return sweep(p,req);
+  }
   return json({error:"not found"},404);
 }
 
@@ -193,6 +228,9 @@ export async function mediaRequest(p,req){
  * Deletes R2 first, then SQLite. A retry can safely continue after interruption.
  */
 export async function deleteAllProfileData(p){
+  // Persist revocation before any external R2 I/O; this marker survives
+  // retries, DO evictions and concurrent uploads that were already running.
+  p.sql.exec("INSERT OR REPLACE INTO profile_lifecycle(key,value) VALUES ('deleted',1)");
   const name=p.ctx.id?.name;
   if(typeof name!=="string"||!name.startsWith("profile:"))throw Error("missing profile identity");
   const prefix="users/"+name.slice(8)+"/media/";

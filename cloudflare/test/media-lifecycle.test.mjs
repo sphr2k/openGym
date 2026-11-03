@@ -98,5 +98,57 @@ test("account deletion's internal profile purge is idempotent, including R2",asy
   assert.equal(f.blobs.size,0);
   const second=await parse(await f.profile.fetch(post("/_internal/delete-all")));
   assert.deepEqual(second.body,{ok:true});
-  assert.deepEqual((await parse(await f.profile.fetch(new Request("https://gym.example/api/data")))).body,{state:null,rev:0});
+  const forbidden=await parse(await f.profile.fetch(new Request("https://gym.example/api/data")));
+  assert.equal(forbidden.status,410);
+  assert.equal(forbidden.body.code,"profile-deleted");
+});
+
+
+test("deletion tombstone prevents an in-flight R2 upload from resurrecting blobs",async()=>{
+  const f=fixture("concurrent");
+  const data=jpeg(),hash=sha(data);
+  let release,started;
+  const paused=new Promise(r=>{release=r;});
+  const initiated=new Promise(r=>{started=r;});
+  const original=f.env.MEDIA.put.bind(f.env.MEDIA);
+  f.env.MEDIA.put=async(key,bytes)=>{
+    started();
+    await paused;
+    return original(key,bytes);
+  };
+  const pending=f.profile.fetch(raw("PUT","/api/media/"+hash,data));
+  await initiated;
+  const removed=await f.profile.fetch(post("/_internal/delete-all"));
+  assert.equal(removed.status,200);
+  release();
+  const upload=await parse(await pending);
+  assert.equal(upload.status,410);
+  assert.equal(upload.body.code,"profile-deleted");
+  assert.equal(f.blobs.size,0);
+  const reopened=new ProfileDO(f.ctx,f.env);
+  assert.equal((await reopened.fetch(new Request("https://gym.example/api/data"))).status,410);
+  assert.equal((await reopened.fetch(raw("PUT","/api/media/"+hash,data))).status,410);
+});
+
+test("SQLite-backed media throttles persist across Durable Object restarts",async()=>{
+  const f=fixture("limited",{env:{MEDIA_UPLOADS_PER_HOUR:"1"}});
+  const a=jpeg(),b=jpeg();
+  assert.equal((await f.profile.fetch(raw("PUT","/api/media/"+sha(a),a))).status,201);
+  const reopened=new ProfileDO(f.ctx,f.env);
+  const blocked=await parse(await reopened.fetch(raw("PUT","/api/media/"+sha(b),b)));
+  assert.equal(blocked.status,429);
+  assert.equal(blocked.body.code,"locked");
+  assert.ok(blocked.body.retryAfter>0);
+  assert.equal(f.blobs.size,1);
+});
+test("manual sweep enforces the upstream ten-per-hour budget",async()=>{
+  const f=fixture("sweeper");
+  await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state(),stamped:true}),"application/json"));
+  for(let i=0;i<10;i++){
+    const response=await f.profile.fetch(post("/api/media/sweep"));
+    assert.equal(response.status,200,"sweep "+i);
+  }
+  const denied=await parse(await f.profile.fetch(post("/api/media/sweep")));
+  assert.equal(denied.status,429);
+  assert.equal(denied.body.code,"locked");
 });
