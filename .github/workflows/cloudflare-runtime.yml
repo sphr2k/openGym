@@ -1,0 +1,48 @@
+name: Cloudflare runtime (experimental)
+
+on:
+  push:
+    paths:
+      - 'cloudflare/**'
+      - 'openspec/**'
+      - 'api/sync-stamps.js'
+      - '.github/workflows/cloudflare-runtime.yml'
+  pull_request:
+    paths:
+      - 'cloudflare/**'
+      - 'api/sync-stamps.js'
+      - '.github/workflows/cloudflare-runtime.yml'
+
+jobs:
+  workers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            cloudflare/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci --prefix cloudflare
+      - run: npm ci --prefix frontend
+      - run: npm run build --prefix frontend
+      - run: node scripts/catalogue/stage-media.mjs frontend/dist
+      - run: npm run check --prefix cloudflare
+      - name: Run Wrangler DO compatibility tests
+        shell: bash
+        run: |
+          npm run dev --prefix cloudflare -- --port 8791 --ip 127.0.0.1 > "$RUNNER_TEMP/worker.log" 2>&1 &
+          worker_pid=$!
+          trap 'kill "$worker_pid" || true' EXIT
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8791/api/health > /dev/null; then break; fi
+            sleep 2
+          done
+          npm run test:integration --prefix cloudflare || {
+            tail -100 "$RUNNER_TEMP/worker.log"
+            exit 1
+          }

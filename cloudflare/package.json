@@ -1,0 +1,19 @@
+{
+  "name": "@opengym/cloudflare-runtime",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --outdir dist",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run build && npm run test",
+    "test:integration": "node test/local-worker.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^13.3.3"
+  },
+  "devDependencies": {
+    "cbor-x": "^1.6.9",
+    "wrangler": "^4.100.0"
+  }
+}
