@@ -1,6 +1,7 @@
 import { AccountDO } from "./accounts.js";
 import { ProfileDO } from "./profile.js";
 import { json, BODY_LIMIT } from "./protocol.js";
+import { excusedOn, nudgeFor } from "../../api/nudge.js";
 
 export { AccountDO, ProfileDO };
 const MOBILE_ORIGINS = new Set(["capacitor://localhost", "https://localhost", "http://localhost"]);
@@ -17,6 +18,7 @@ const ACCOUNT_ROUTES = new Set([
   "POST /api/logout/all"
 ]);
 const PROFILE_ROUTES = new Set(["GET /api/data", "GET /api/data/rev", "PUT /api/data"]);
+const NUDGE_ROUTE = "GET /api/nudge-check";
 
 function account(env) {
   return env.ACCOUNTS.getByName("accounts");
@@ -77,7 +79,7 @@ export default {
         response = json({invite_only:false,allow_guest:allowGuest});
       } else if (ACCOUNT_ROUTES.has(route)) {
         response = await account(env).fetch(request);
-      } else if (PROFILE_ROUTES.has(route)) {
+      } else if (PROFILE_ROUTES.has(route) || route === NUDGE_ROUTE) {
         const auth = new Request(new URL("/_internal/resolve",url), {
           method:"POST",
           headers: {...Object.fromEntries(request.headers), "content-type": "application/json"},
@@ -87,7 +89,27 @@ export default {
         if (!authAnswer.ok) response = json({error:"not signed in"},401);
         else {
           const {id} = await authAnswer.json();
-          response = await env.PROFILES.getByName("profile:" + id).fetch(request);
+          const profile = env.PROFILES.getByName("profile:" + id);
+          if (route === NUDGE_ROUTE) {
+            const date = url.searchParams.get("date") || "";
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + "T00:00:00Z"))) {
+              response = json({error:"date must be YYYY-MM-DD",code:"date-invalid"},400);
+            } else {
+              const answer = await profile.fetch(new Request(new URL("/api/data",url),{method:"GET"}));
+              if (!answer.ok) response = answer;
+              else {
+                const {state,rev} = await answer.json();
+                const snapshot = state || {};
+                const workouts = Array.isArray(snapshot.workouts) ? snapshot.workouts : [];
+                const done = workouts.some(w => w && w.d === date) || excusedOn(snapshot,date);
+                let nudge = false;
+                try { nudge = !done && !!nudgeFor(snapshot,date); } catch { nudge = true; }
+                response = json({date,done,nudge,rev});
+              }
+            }
+          } else {
+            response = await profile.fetch(request);
+          }
         }
       } else {
         response = json({error:"not found"},404);

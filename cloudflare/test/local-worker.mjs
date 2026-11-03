@@ -89,6 +89,10 @@ assert.equal(v1.rev,1);
 const stale=await put("/api/data",{state:{workouts:[],routines:[]},baseRev:0},loginCookie);
 assert.equal(stale.status,409);
 assert.equal(stale.body.state.workouts[0].id,"w-1");
+const nudge=ok(await api("/api/nudge-check?date=2026-11-03","GET",undefined,loginCookie),"nudge-check");
+assert.deepEqual(nudge,{date:"2026-11-03",done:true,nudge:false,rev:1});
+const malformed=await api("/api/nudge-check?date=invalid","GET",undefined,loginCookie);
+assert.equal(malformed.status,400);
 const current=ok(await api("/api/data","GET",undefined,loginCookie),"get");
 assert.equal(current.state.active,undefined);
 

@@ -8,7 +8,7 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - Cookie sessions, bearer sessions and session-version invalidation
 - Fresh-passkey-proof phone pairing, one-use/expiring pairing codes
 - GET /api/me, GET /api/config, GET /api/health, GET /api/account/passkeys
-- GET /api/data, GET /api/data/rev, PUT /api/data
+- GET /api/data, GET /api/data/rev, PUT /api/data and native background GET /api/nudge-check
 - Original state stamps and revision/write-ID conflict contract (api/sync-stamps.js)
 - Actual Vite UI and 13k public exercise-media assets served via Workers Static Assets
 - Request-origin filtering and native Capacitor preflight
