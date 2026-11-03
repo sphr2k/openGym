@@ -1,4 +1,5 @@
 import { stampPut } from "../../api/sync-stamps.js";
+import { initMedia, noteReferences, mediaRequest } from "./media.js";
 import { forClient, json, jsonBody, randomHex, validateProfile } from "./protocol.js";
 
 const WID_KEEP = 50;
@@ -16,6 +17,7 @@ export class ProfileDO {
     this.sql.exec(
       "CREATE TABLE IF NOT EXISTS document (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL, revision INTEGER NOT NULL)"
     );
+    initMedia(this);
   }
 
   current() {
@@ -35,6 +37,7 @@ export class ProfileDO {
   }
 
   write(body) {
+    if (this.mediaSweepRunning) return json({error:"media maintenance in progress"},503);
     // This closure is sync by design: serializable CAS + JSON commit in one DO.
     return this.ctx.storage.transactionSync(() => {
       const { state: cur, rev: curRev, unreadable } = this.current();
@@ -75,6 +78,7 @@ export class ProfileDO {
         throw err;
       }
       this.sql.exec("INSERT INTO document(id, body, revision) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, revision = excluded.revision", content, next._rev);
+      noteReferences(this,next);
       // The externally returned revision intentionally differs if stampPut modified unknown fields:
       // matching Node behavior causes the client to pull the stamped state on the next check.
       return json({ ok: true, ts: next._ts || null, rev: curRev + 1, wid: next._wid });
@@ -91,6 +95,7 @@ export class ProfileDO {
       if (parsed.error) return parsed.error;
       return this.write(parsed.value);
     }
+    if (path.startsWith("/api/media/")) return mediaRequest(this,request);
     return json({ error: "not found" }, 404);
   }
 }

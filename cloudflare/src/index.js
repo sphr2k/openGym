@@ -2,6 +2,7 @@ import { AccountDO } from "./accounts.js";
 import { ProfileDO } from "./profile.js";
 import { json, BODY_LIMIT } from "./protocol.js";
 import { excusedOn, nudgeFor } from "../../api/nudge.js";
+import { limits, mediaConfig } from "./media-validation.js";
 
 export { AccountDO, ProfileDO };
 const MOBILE_ORIGINS = new Set(["capacitor://localhost", "https://localhost", "http://localhost"]);
@@ -19,6 +20,7 @@ const ACCOUNT_ROUTES = new Set([
 ]);
 const PROFILE_ROUTES = new Set(["GET /api/data", "GET /api/data/rev", "PUT /api/data"]);
 const NUDGE_ROUTE = "GET /api/nudge-check";
+const MEDIA_ROUTE = /^\/api\/media\/(?:[0-9a-f]{64}|missing|sweep)$/;
 
 function account(env) {
   return env.ACCOUNTS.getByName("accounts");
@@ -58,7 +60,7 @@ export default {
     const methodWrites = ["POST","PUT","PATCH","DELETE"].includes(request.method);
     if (methodWrites) {
       const size = Number(request.headers.get("content-length") || 0);
-      if (size > BODY_LIMIT) return json({error:"body too large"},413);
+      if (size > BODY_LIMIT && !(request.method==="PUT" && /^\/api\/media\/[0-9a-f]{64}$/.test(path))) return json({error:"body too large"},413);
       // Existing native apps use Authorization: Bearer and a separate origin.
       // Cookie-backed browser writes must come from our actual origin.
       const bearer = (request.headers.get("authorization") || "").startsWith("Bearer ");
@@ -76,10 +78,11 @@ export default {
         response = await account(env).fetch(new Request(new URL("/_internal/health",url), {method:"GET"}));
       } else if (route === "GET /api/config") {
         const allowGuest = !/^(false|0|off)$/i.test(String(env.ALLOW_GUEST ?? "true"));
-        response = json({invite_only:false,allow_guest:allowGuest});
+        const media = limits(env);
+        response = json({invite_only:false,allow_guest:allowGuest,...(media.enabled?{media:mediaConfig(media)}:{})});
       } else if (ACCOUNT_ROUTES.has(route)) {
         response = await account(env).fetch(request);
-      } else if (PROFILE_ROUTES.has(route) || route === NUDGE_ROUTE) {
+      } else if (PROFILE_ROUTES.has(route) || route === NUDGE_ROUTE || MEDIA_ROUTE.test(path)) {
         const auth = new Request(new URL("/_internal/resolve",url), {
           method:"POST",
           headers: {...Object.fromEntries(request.headers), "content-type": "application/json"},
