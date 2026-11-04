@@ -1,5 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import worker from "../src/index.js";
 
 test("staging fails closed when the secret binding is missing",async()=>{
@@ -23,3 +24,17 @@ test("staging rejects incorrect credentials and serves API after correct key",as
   assert.equal(good.status,200);
   assert.equal((await good.json()).allow_guest,true);
 });
+
+test("staging Wrangler routes ALL static assets through the protection gate",()=>{
+  const fs=requireJsonc();
+  assert.equal(fs.assets.run_worker_first,true,
+    "Cloudflare otherwise serves assets before fetch() and bypasses STAGING_LOCKED");
+  assert.equal(fs.vars.STAGING_LOCKED,"true");
+  assert.notEqual(fs.name,"opengym-cloudflare");
+  assert.notEqual(fs.r2_buckets[0].bucket_name,"opengym-media");
+});
+
+function requireJsonc(){
+  // The checked-in .jsonc contains only JSON-compatible syntax.
+  return JSON.parse(readFileSync(new URL("../wrangler.staging.jsonc",import.meta.url),"utf8"));
+}

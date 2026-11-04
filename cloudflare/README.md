@@ -62,7 +62,9 @@ From cloudflare/ after building the frontend and catalogue media:
    via stdin to: npx wrangler secret put STAGING_API_KEY --config wrangler.staging.jsonc
 
 If the STAGING_API_KEY binding is absent, the staging Worker fails closed with
-HTTP 404. The header X-OpenGym-Stage-Key must match it to access any route,
+HTTP 404. Crucially, staging config sets assets.run_worker_first to true:
+without it Cloudflare would serve static assets before invoking the Worker
+and bypass the staging protection. The header X-OpenGym-Stage-Key must match it to access any route,
 including the static app. Never embed the key in browser JavaScript, HTML, a URL,
 or a public repository. The synthetic WebAuthn HTTP test supports private
 OPENGYM_TEST_URL and OPENGYM_STAGE_KEY environment variables.
