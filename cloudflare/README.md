@@ -20,7 +20,7 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - Full local Wrangler/WebAuthn/paired-client integration test including R2 and account deletion
 - R2 orphan reconciliation: recover objects that landed before an interrupted SQLite commit;
   preserve referenced blobs and apply the existing grace period to unreferenced blobs; an alarm is persisted before R2 writes so interrupted uploads are revisited
-- Guarded Cloudflare staging Worker deployed with separate R2 bucket and DO SQLite
+- Guarded Cloudflare staging Worker deployed with separate R2 bucket and DO SQLite (legacy format; not yet upgraded to R2 profile snapshots)
 
 **Not production-ready:** Admin-issued recovery, admin dashboard, watch relay, push,
 AI coach, integration APIs, verified migration/backup tooling and full native app parity
@@ -34,6 +34,46 @@ explicit iOS Service Auth policy). The native app uses its existing
 Cloudflare Access Client ID/Secret support. Real native-device acceptance
 is still pending.
 
+
+## Profile storage: immutable R2 snapshots
+
+Each user owns one SQLite-backed \`ProfileDO\`. The **entire original JSON profile**
+is stored as a single immutable object in the existing private R2 bucket under
+\`users/<user-id>/snapshots/\`. SQLite holds only the current revision, write ID,
+snapshot key, SHA-256 checksum, a short revision history and the existing media
+metadata. No JSON schema mapping, Drizzle or application-specific DB migrations
+are required for new upstream fields.
+
+Writes load the snapshot, run the original \`stampPut\`, upload a *new* R2
+object and then atomically compare and update the SQLite pointer/history/media
+references. The final CAS includes the snapshot revision actually read before
+the async R2 operation. Versioned writers receive the original HTTP 409
+conflict shape. Unversioned writers retry against the newest state, rerunning
+\`stampPut\` (bounded retries). \`GET /api/data/rev\` reads SQLite alone.
+
+**Recovery/GC:** A persistent DO alarm is armed before each R2 PUT. A repeated,
+prefix-scoped mark-and-sweep lists R2 snapshots and reconciles against SQLite.
+Unpublished objects must be at least 24h old before automatic removal.
+Committed snapshots are preserved for 35 days, plus the current snapshot and
+the immediately preceding PITR-window anchor, even when an account is idle
+for months. GC is *application-managed*; do not configure an age-based R2
+lifecycle rule on the snapshot prefix. Intentional account deletion revokes
+access, purges R2 snapshots and retains temporary sweep wakeups for delayed
+uploads. Point-in-time recovery covers the DO SQLite pointer only, not R2
+objects; this retention policy is necessary for recoverability, not a backup
+substitute.
+
+The client continues to send whole profiles and is **still subject to the
+existing 5 MiB HTTP request limit**. Only the SQLite per-row 2 MiB limit is
+removed.
+
+**Clean-slate layout:** No legacy document reader, migration or dual-write is
+shipped. The short-lived fail-closed check for the old \`document\` table is
+only a cutover safety guard ([remove in #505](https://github.com/sphr2k/homelab/issues/505)).
+The owner's existing Cloudflare staging data requires an **external one-shot
+migration and verified independent backup** before this Worker may be deployed
+([migration #494](https://github.com/sphr2k/homelab/issues/494)).
+Do not deploy directly over the current legacy staging SQLite database.
 
 ## Local development
 

@@ -5,6 +5,7 @@ import {context} from "./sqlite.mjs";
 import {ProfileDO} from "../src/profile.js";
 
 const sha=b=>createHash("sha256").update(b).digest("hex");
+const mediaCount=blobs=>[...blobs.keys()].filter(k=>k.includes("/media/")).length;
 const jpeg=()=>Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0]),randomBytes(124)]);
 const raw=(method,path,bytes,mime="image/jpeg")=>
   new Request("https://gym.example"+path,{method,headers:{"content-type":mime},body:bytes});
@@ -20,7 +21,7 @@ function fixture(name,opts={}){
   const blobs=opts.blobs||new Map();
   const media={
     async put(key,bytes){blobs.set(key,Buffer.from(bytes));return {size:bytes.length};},
-    async get(key){const b=blobs.get(key);return b?{size:b.length,body:new Blob([b]).stream()}:null;},
+    async get(key){const b=blobs.get(key);return b?{size:b.length,body:new Blob([b]).stream(),text:async()=>b.toString("utf8")}:null;},
     async head(key){const b=blobs.get(key);return b?{
       size:b.length,httpMetadata:{contentType:"image/jpeg"},
       uploaded:opts.uploaded||new Date()
@@ -53,11 +54,11 @@ test("grace-period alarm deletes only unreferenced blobs, with a readable profil
   assert.equal((await profile.fetch(raw("PUT","/api/media/"+hb,b))).status,201);
   // There is no saved snapshot yet: an alarm must retain every blob.
   await profile.alarm();
-  assert.equal(blobs.size,2);
+  assert.equal(mediaCount(blobs),2);
   const put=await profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([ha]),baseRev:0,stamped:true}),"application/json"));
   assert.equal(put.status,200);
   await profile.alarm();
-  assert.equal(blobs.size,1);
+  assert.equal(mediaCount(blobs),1);
   assert.equal(blobs.has("users/jan/media/"+ha),true);
   assert.equal(blobs.has("users/jan/media/"+hb),false);
   const miss=await parse(await profile.fetch(post("/api/media/missing",{hashes:[ha,hb]})));
@@ -74,11 +75,11 @@ test("failed R2 delete remains retryable rather than dropping SQLite state",asyn
   let times=0;
   f.env.MEDIA.delete=async()=>{if(!times++){throw Error("temporary R2 outage");}return original("users/retry/media/"+h);};
   await f.profile.alarm();
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
   const metadata=f.profile.sql.exec("SELECT status FROM media_files WHERE hash=?",h).toArray()[0];
   assert.equal(metadata.status,"ready");
   await f.profile.alarm();
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
 });
 
 test("quota is atomic and refuses uploads over configured limit",async()=>{
@@ -89,7 +90,7 @@ test("quota is atomic and refuses uploads over configured limit",async()=>{
   const denied=await parse(await f.profile.fetch(raw("PUT","/api/media/"+sha(other),other)));
   assert.equal(denied.status,413);
   assert.equal(denied.body.code,"media-quota");
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
 });
 
 test("account deletion's internal profile purge is idempotent, including R2",async()=>{
@@ -98,7 +99,7 @@ test("account deletion's internal profile purge is idempotent, including R2",asy
   await f.profile.fetch(raw("PUT","/api/media/"+h,b));
   const first=await parse(await f.profile.fetch(post("/_internal/delete-all")));
   assert.deepEqual(first.body,{ok:true});
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
   const second=await parse(await f.profile.fetch(post("/_internal/delete-all")));
   assert.deepEqual(second.body,{ok:true});
   const forbidden=await parse(await f.profile.fetch(new Request("https://gym.example/api/data")));
@@ -127,7 +128,7 @@ test("deletion tombstone prevents an in-flight R2 upload from resurrecting blobs
   const upload=await parse(await pending);
   assert.equal(upload.status,410);
   assert.equal(upload.body.code,"profile-deleted");
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
   const reopened=new ProfileDO(f.ctx,f.env);
   assert.equal((await reopened.fetch(new Request("https://gym.example/api/data"))).status,410);
   assert.equal((await reopened.fetch(raw("PUT","/api/media/"+hash,data))).status,410);
@@ -142,7 +143,7 @@ test("SQLite-backed media throttles persist across Durable Object restarts",asyn
   assert.equal(blocked.status,429);
   assert.equal(blocked.body.code,"locked");
   assert.ok(blocked.body.retryAfter>0);
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
 });
 test("manual sweep enforces the upstream ten-per-hour budget",async()=>{
   const f=fixture("sweeper");

@@ -131,7 +131,13 @@ async function upload(p,req,h){
       p.sql.exec("DELETE FROM media_files WHERE hash=? AND status='reserved' AND token=?",h,reservation.token);
       return revoked();
     }
-    const hasRef=referencedHashes(p.current().state).has(h);
+    const loaded=await p.current();
+    if(loaded.unreadable) throw Error("profile unreadable during media upload");
+    if(profileDeleted(p)){
+      await p.env.MEDIA.delete(key(p,h)).catch(()=>{});
+      return revoked();
+    }
+    const hasRef=referencedHashes(loaded.state).has(h);
     p.sql.exec("UPDATE media_files SET status='ready',mime=?,size=?,token=NULL,expires=NULL,unreferenced_since=? WHERE hash=? AND status='reserved' AND token=?",
       sniff.mime,bytes.length,hasRef?null:Date.now(),h,reservation.token);
     return json({ok:true,hash:h,mime:sniff.mime,size:bytes.length,existed:false},201);
@@ -206,11 +212,13 @@ export async function reconcileOrphans(p,state) {
 export async function garbageCollect(p,graceMs){
   if(profileDeleted(p))return json({removed:0,freedBytes:0,usage:usage(p)});
   if(p.mediaSweepRunning)return err(429,"busy",{retryAfter:5});
-  const {state,unreadable}=p.current();
-  if(unreadable||!state)return json({removed:0,freedBytes:0,usage:usage(p)});
+  // Lock before awaiting the R2 profile snapshot: otherwise a writer could
+  // commit new media references while GC is using a stale profile.
   p.mediaSweepRunning=true;
   let removed=0,freedBytes=0;
   try{
+    const {state,unreadable}=await p.current();
+    if(unreadable||!state)return json({removed:0,freedBytes:0,usage:usage(p)});
     await reconcileOrphans(p,state);
     const refs=referencedHashes(state),now=Date.now();
     for(const f of p.sql.exec("SELECT hash,size,unreferenced_since FROM media_files WHERE status='ready'").toArray()){
@@ -236,20 +244,22 @@ export async function garbageCollect(p,graceMs){
   }finally{p.mediaSweepRunning=false;}
 }
 export async function scheduleGarbageCollection(p){
-  if(!p.env.MEDIA||typeof p.ctx.storage.setAlarm!=="function")return;
-  const entry=p.sql.exec("SELECT MIN(unreferenced_since) AS next FROM media_files WHERE status='ready' AND unreferenced_since IS NOT NULL").toArray()[0];
-  if(entry.next===null){
-    const reservations=p.sql.exec("SELECT COUNT(*) AS n FROM media_files WHERE status='reserved'").toArray()[0].n;
-    if(reservations){
-      // Pending or orphaned uploads must not be forgotten after a DO crash.
-      await p.ctx.storage.setAlarm(Date.now()+6*60*60*1000);
-    }else if(typeof p.ctx.storage.deleteAlarm==="function")await p.ctx.storage.deleteAlarm();
+  if(!p.env.MEDIA || typeof p.ctx.storage.setAlarm!=="function")return;
+  const now=Date.now();
+  const next=p.sql.exec("SELECT MIN(unreferenced_since) AS next FROM media_files WHERE status='ready' AND unreferenced_since IS NOT NULL").toArray()[0]?.next;
+  const reserved=p.sql.exec("SELECT COUNT(*) AS n FROM media_files WHERE status='reserved'").toArray()[0].n;
+  const candidates=[];
+  if(p.store.gcActive()) candidates.push(now+6*60*60*1000);
+  if(reserved) candidates.push(now+6*60*60*1000);
+  if(next!==null && next!==undefined){
+    const due=Number(next)+limits(p.env).gcGraceDays*86400000;
+    candidates.push(Math.max(now+10000,due));
+  }
+  if(!candidates.length){
+    if(typeof p.ctx.storage.deleteAlarm==="function")await p.ctx.storage.deleteAlarm();
     return;
   }
-  const due=Number(entry.next)+limits(p.env).gcGraceDays*86400000;
-  // A profile with no snapshot is never assumed empty: keep files, retry later.
-  const safeDelay=p.current().state?10000:6*60*60*1000;
-  await p.ctx.storage.setAlarm(Math.max(Date.now()+safeDelay,due));
+  await p.ctx.storage.setAlarm(Math.min(...candidates));
 }
 async function sweep(p,req){
   const parsed=await jsonBody(req);if(parsed.error)return parsed.error;
@@ -294,9 +304,14 @@ export async function deleteAllProfileData(p){
     await p.env.MEDIA.delete(page.objects.map(o=>o.key));
     if(i===9999)throw Error("profile media cleanup exceeded safety limit");
   }
+  // Remove snapshots before clearing their canonical SQL pointers. If an
+  // external delete fails, the account deletion can be retried idempotently.
+  // The ongoing GC marker remains after deletion to catch late R2 uploads.
+  await p.store.sweep(true);
   p.ctx.storage.transactionSync(()=>{
     p.sql.exec("DELETE FROM media_files");
-    p.sql.exec("DELETE FROM document");
+    p.store.clear();
   });
+  await scheduleGarbageCollection(p);
   return json({ok:true});
 }

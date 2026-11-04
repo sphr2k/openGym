@@ -8,10 +8,22 @@ const req = (method, body) => new Request(url, {
   method, ...(body ? {headers: {"Content-Type":"application/json"},body:JSON.stringify(body)}:{})
 });
 const parse = async response => ({status:response.status,body:await response.json()});
+// Real ProfileDO tests need the same per-user identity and R2 binding as Wrangler.
+function fixture() {
+  const {ctx,db}=context();
+  ctx.id={name:"profile:unit"};
+  const objects=new Map();
+  const env={MEDIA:{
+    async put(k,data){objects.set(k,{data:Buffer.from(data),uploaded:new Date()});return {size:data.length};},
+    async get(k){const o=objects.get(k);return o?{text:async()=>o.data.toString("utf8"),body:new Blob([o.data]).stream()}:null;},
+    async delete(k){for(const x of [].concat(k))objects.delete(x);},
+    async list({prefix,limit=1000}){return {objects:[...objects.entries()].filter(([k])=>k.startsWith(prefix)).slice(0,limit).map(([key,v])=>({key,uploaded:v.uploaded})),truncated:false};}
+  }};
+  return {ctx,db,env,objects,profile:new ProfileDO(ctx,env)};
+}
 
 test("legacy initial read, write and revision polling",async()=>{
-  const {ctx} = context();
-  const profile = new ProfileDO(ctx,{});
+  const {profile}=fixture();
   assert.deepEqual((await parse(await profile.fetch(req("GET")))).body,{state:null,rev:0});
   const state = {workouts:[{id:"w1",d:"2026-11-03",entries:[{id:"0025",sets:[{w:66.3,r:7,at:1700000000000}]}]}],routines:[],active:{id:"local"}};
   const put = await parse(await profile.fetch(req("PUT",{state,baseRev:0,stamped:true})));
@@ -27,7 +39,7 @@ test("legacy initial read, write and revision polling",async()=>{
 });
 
 test("baseRev and baseWid protect writes and return original 409 shape",async()=>{
-  const {ctx}=context();const profile=new ProfileDO(ctx,{});
+  const {profile}=fixture();
   const s={workouts:[],routines:[]};
   const first=(await parse(await profile.fetch(req("PUT",{state:s,baseRev:0,stamped:true})))).body;
   const stale=await parse(await profile.fetch(req("PUT",{state:{workouts:[{id:"should-not-write"}],routines:[]},baseRev:0})));
@@ -44,7 +56,7 @@ test("baseRev and baseWid protect writes and return original 409 shape",async()=
 });
 
 test("concurrent writers cannot both overwrite the same revision",async()=>{
-  const {ctx}=context();const profile=new ProfileDO(ctx,{});
+  const {profile}=fixture();
   const s=(n)=>({state:{workouts:[{id:"w"+n}],routines:[]},baseRev:0,stamped:true});
   const writes=await Promise.all([profile.fetch(req("PUT",s(1))),profile.fetch(req("PUT",s(2)))]);
   assert.deepEqual(writes.map(r=>r.status).sort(),[200,409]);
@@ -53,7 +65,7 @@ test("concurrent writers cannot both overwrite the same revision",async()=>{
 });
 
 test("legacy stampPut, strict state validation and reset stamp preservation",async()=>{
-  const {ctx}=context();const profile=new ProfileDO(ctx,{});
+  const {profile}=fixture();
   for(const invalid of [{},{_rev:12},{workouts:{},routines:[]},[],null]){
     const r=await parse(await profile.fetch(req("PUT",{state:invalid})));
     assert.equal(r.status,400);
@@ -71,7 +83,7 @@ test("legacy stampPut, strict state validation and reset stamp preservation",asy
 });
 
 test("server-only metadata is not exposed to clients", async()=>{
-  const {ctx}=context();const profile=new ProfileDO(ctx,{});
+  const {profile}=fixture();
   const s={workouts:[],routines:[],_prior:{secret:1},_unstamped:{secret:2}};
   assert.equal((await profile.fetch(req("PUT",{state:s,stamped:true}))).status,200);
   const now=(await parse(await profile.fetch(req("GET")))).body.state;

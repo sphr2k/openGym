@@ -133,6 +133,16 @@ assert.equal(lost.status,409);
 const reloaded=ok(await api("/api/data","GET",undefined,loginCookie),"data after native put");
 assert.equal(reloaded.state.workouts.length,2);
 
+// Real R2-backed whole-profile storage: a single workout larger than
+// Cloudflare SQLite's 2 MB row/string ceiling survives native HTTP sync.
+const bigWorkout={id:"huge",notes:"🐢".repeat(530000)};
+const hugeProfile={...reloaded.state,workouts:[...reloaded.state.workouts,bigWorkout]};
+const hugePush=ok(await put("/api/data",{state:hugeProfile,baseRev:reloaded.rev,baseWid:reloaded.state._wid,stamped:true},bearer),"large R2 profile write");
+const hugeRead=ok(await api("/api/data","GET",undefined,loginCookie),"large R2 profile reload");
+assert.equal(hugeRead.state.workouts.at(-1).notes,bigWorkout.notes);
+assert.equal(hugeRead.rev,hugePush.rev);
+console.log("Immutable R2 snapshot round-trip > 2 MiB over real Worker/DO HTTP: OK");
+
 // Exercise the real Settings -> Passkeys flow with a second authenticator.
 const passkeys0=ok(await api("/api/account/passkeys","GET",undefined,loginCookie),"passkeys initial");
 assert.equal(passkeys0.passkeys.length,1);
