@@ -70,8 +70,14 @@ idempotently; the single per-DO alarm is also retained through account deletion
 to catch late R2 uploads.
 
 The client continues to send whole profiles and is **still subject to the
-existing 5 MiB HTTP request limit**. Only the SQLite per-row 2 MiB limit is
-removed.
+shared 5 MiB HTTP request limit**, enforced on actual UTF-8 bytes during
+stream ingestion on both Node/Docker and Cloudflare. Only the SQLite per-row
+2 MiB limit is removed. Media upload bodies are bounded independently by
+the original per-type caps. Cloudflare uses a single reusable payload buffer
+and reserves a per-DO 48 MiB concurrency budget *before* buffering; large
+simultaneous uploads can receive the original HTTP 429 retry response. The
+original Node/Docker backend retains its own streaming/file-backed upload
+adapter and does not need Cloudflare's memory-budget mechanism.
 
 **Clean-slate layout:** No legacy document reader, migration or dual-write is
 shipped. The short-lived fail-closed check for the old \`document\` table is

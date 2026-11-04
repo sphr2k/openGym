@@ -1,3 +1,4 @@
+import { MAX_JSON_BODY_BYTES } from "../../api/body-limits.js";
 /**
  * The unmodified openGym iOS app understands these response shapes.
  * Changes must be checked against api/server.js and its node integration tests.
@@ -33,17 +34,36 @@ export function validateProfile(next) {
   return null;
 }
 
-export const BODY_LIMIT = 5 * 1024 * 1024;
+export const BODY_LIMIT = MAX_JSON_BODY_BYTES;
+
 export async function jsonBody(request) {
-  const length = Number(request.headers.get("content-length") || 0);
-  if (length > BODY_LIMIT) return { error: json({ error: "body too large" }, 413) };
-  let text;
-  try { text = await request.text(); } catch { return { error: json({ error: "bad request" }, 400) }; }
-  if (!text) return { value: {} };
-  if (!/^application\/json\s*(;|$)/i.test(request.headers.get("content-type") || "")) {
-    return { error: json({ error: "content-type must be application/json" }, 415) };
+  const declared=Number(request.headers.get("content-length")||0);
+  if(declared>BODY_LIMIT)return {error:json({error:"body too large"},413)};
+
+  // Never materialize an unbounded UTF-8 body. JS string.length counts UTF-16
+  // code units, *not* bytes, and could admit an oversized emoji-heavy body.
+  // TextDecoder(stream:true) preserves UTF-8 characters split across chunks.
+  const parts=[],decoder=new TextDecoder("utf-8"),reader=request.body?.getReader();
+  let bytes=0;
+  try {
+    if(reader)for(;;) {
+      const {done,value}=await reader.read();
+      if(done)break;
+      bytes+=value.byteLength;
+      if(bytes>BODY_LIMIT){
+        await reader.cancel().catch(()=>{});
+        return {error:json({error:"body too large"},413)};
+      }
+      parts.push(decoder.decode(value,{stream:true}));
+    }
+  }catch{
+    return {error:json({error:"bad request"},400)};
   }
-  if (text.length > BODY_LIMIT) return { error: json({ error: "body too large" }, 413) };
-  try { return { value: text ? JSON.parse(text) : {} }; }
-  catch { return { error: json({ error: "invalid JSON" }, 400) }; }
+  const content=parts.join("")+decoder.decode();
+  if(!content)return {value:{}};
+  if(!/^application\/json\s*(;|$)/i.test(request.headers.get("content-type")||"")){
+    return {error:json({error:"content-type must be application/json"},415)};
+  }
+  try{return {value:JSON.parse(content)};}
+  catch{return {error:json({error:"invalid JSON"},400)};}
 }

@@ -1,3 +1,4 @@
+import { MAX_JSON_BODY_BYTES } from './body-limits.js';
 /* opengym-api — passkey (WebAuthn) auth + per-user state storage for openGym
    No framework, JSON-file storage, signed session cookies.               */
 import http from 'node:http';
@@ -99,7 +100,7 @@ const TRUST_PROXY = /^(1|true|yes|on)$/i.test(process.env.TRUST_PROXY || '');
 // internet don't want the same number. Only affects cookies minted from now on — the expiry is
 // baked into each cookie when it's issued, so lowering this never cuts an existing session short.
 const SESSION_DAYS = Math.max(1, +(process.env.SESSION_DAYS || 90) || 90);
-const MAX_BODY = 5 * 1024 * 1024;
+const MAX_BODY = MAX_JSON_BODY_BYTES;
 // Secure cookies require HTTPS; over plain http://localhost the flag would drop the cookie
 const SECURE = /^https:/i.test(ORIGIN) ? ' Secure;' : '';
 
