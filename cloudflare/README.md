@@ -69,10 +69,10 @@ removed.
 
 **Clean-slate layout:** No legacy document reader, migration or dual-write is
 shipped. The short-lived fail-closed check for the old \`document\` table is
-only a cutover safety guard ([remove in #505](https://github.com/sphr2k/homelab/issues/505)).
+only a cutover safety guard ([remove in #17](https://github.com/sphr2k/openGym/issues/17)).
 The owner's existing Cloudflare staging data requires an **external one-shot
 migration and verified independent backup** before this Worker may be deployed
-([migration #494](https://github.com/sphr2k/homelab/issues/494)).
+([migration #6](https://github.com/sphr2k/openGym/issues/6)).
 Do not deploy directly over the current legacy staging SQLite database.
 
 ## Local development
