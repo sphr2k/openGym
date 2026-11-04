@@ -53,6 +53,17 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+    // Fail closed on an incomplete staging configuration; this control also
+    // protects static assets and prevents anyone from registering publicly.
+    // Do not enable it in the regular user-facing Worker deployment.
+    if (env.STAGING_LOCKED === "true") {
+      const supplied = request.headers.get("x-opengym-stage-key");
+      if (typeof env.STAGING_API_KEY !== "string" ||
+          !supplied || supplied !== env.STAGING_API_KEY) {
+        return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+      }
+    }
+
     if (!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
     if (path.startsWith("/api/_internal/") || path.startsWith("/_internal/")) return json({error:"not found"},404);
 

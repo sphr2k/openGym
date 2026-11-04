@@ -52,3 +52,5 @@ frontend/pdf-samples/
 # Generated Cloudflare Worker bundles and local DO state
 cloudflare/dist/
 cloudflare/.wrangler/
+
+cloudflare/dist-staging/

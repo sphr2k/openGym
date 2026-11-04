@@ -21,7 +21,10 @@ function fixture(name,opts={}){
   const media={
     async put(key,bytes){blobs.set(key,Buffer.from(bytes));return {size:bytes.length};},
     async get(key){const b=blobs.get(key);return b?{size:b.length,body:new Blob([b]).stream()}:null;},
-    async head(key){const b=blobs.get(key);return b?{size:b.length}:null;},
+    async head(key){const b=blobs.get(key);return b?{
+      size:b.length,httpMetadata:{contentType:"image/jpeg"},
+      uploaded:opts.uploaded||new Date()
+    }:null;},
     async delete(keys){for(const k of [].concat(keys))blobs.delete(k);},
     async list({prefix,limit=1000}){return {objects:[...blobs.keys()].filter(k=>k.startsWith(prefix)).slice(0,limit).map(key=>({key})),truncated:false};}
   };
@@ -151,4 +154,54 @@ test("manual sweep enforces the upstream ten-per-hour budget",async()=>{
   const denied=await parse(await f.profile.fetch(post("/api/media/sweep")));
   assert.equal(denied.status,429);
   assert.equal(denied.body.code,"locked");
+});
+
+test("R2 orphan referenced by profile is recovered without requiring another upload",async()=>{
+  const f=fixture("recover");
+  const file=jpeg(),h=sha(file);
+  assert.equal((await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({
+    state:state([h]),stamped:true
+  }),"application/json"))).status,200);
+  // Simulates R2 PUT succeeding immediately before the SQLite commit was lost.
+  f.blobs.set("users/recover/media/"+h,file);
+  assert.equal(f.profile.sql.exec("SELECT COUNT(*) AS n FROM media_files").toArray()[0].n,0);
+  await f.profile.alarm();
+  const restored=f.profile.sql.exec("SELECT hash,size,mime,unreferenced_since FROM media_files").toArray()[0];
+  assert.deepEqual({...restored},{hash:h,size:file.length,mime:"image/jpeg",unreferenced_since:null});
+  const downloaded=await f.profile.fetch(new Request("https://gym.example/api/media/"+h));
+  assert.equal(downloaded.status,200);
+  assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()),file);
+});
+
+test("old unreferenced R2 orphan is cleaned while recent orphan gets grace period",async()=>{
+  const f=fixture("orphan-clean",{env:{MEDIA_GC_GRACE_DAYS:"14"}});
+  const a=jpeg(),ha=sha(a),b=jpeg(),hb=sha(b);
+  assert.equal((await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({
+    state:state(),stamped:true
+  }),"application/json"))).status,200);
+  f.blobs.set("users/orphan-clean/media/"+ha,a);
+  f.blobs.set("users/orphan-clean/media/"+hb,b);
+  f.env.MEDIA.head=async(key)=>{
+    const bytes=f.blobs.get(key);if(!bytes)return null;
+    return {size:bytes.length,httpMetadata:{contentType:"image/jpeg"},
+      uploaded:key.endsWith(ha)?new Date(Date.now()-15*86400000):new Date()};
+  };
+  await f.profile.alarm();
+  assert.equal(f.blobs.has("users/orphan-clean/media/"+ha),false);
+  assert.equal(f.blobs.has("users/orphan-clean/media/"+hb),true);
+  const remaining=f.profile.sql.exec("SELECT hash FROM media_files WHERE status='ready'").toArray();
+  assert.deepEqual(remaining.map(x=>({...x})),[{hash:hb}]);
+});
+
+test("reserve persists a wakeup before the first R2 PUT, enabling interrupted-upload recovery",async()=>{
+  const f=fixture("wake-before-write");
+  let observedAlarm=false;
+  const original=f.env.MEDIA.put.bind(f.env.MEDIA);
+  f.env.MEDIA.put=async(key,bytes)=>{
+    observedAlarm=f.alarms.some(at=>Number.isFinite(at));
+    return original(key,bytes);
+  };
+  const b=jpeg();
+  assert.equal((await f.profile.fetch(raw("PUT","/api/media/"+sha(b),b))).status,201);
+  assert.equal(observedAlarm,true,"alarm must be registered before R2 write");
 });

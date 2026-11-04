@@ -115,6 +115,14 @@ async function upload(p,req,h){
   if(reservation.quota)return err(413,"media-quota",{usedMB:Math.round(stats(p).bytes/104857.6)/10,quotaMB:l.quotaMB});
   if(!reservation.token)return json({error:"media reservation failed"},503);
   try{
+    // Register a wakeup BEFORE any external R2 write. If an isolate dies after
+    // R2 PUT but before SQLite metadata commit, the next alarm can reconcile.
+    if(typeof p.ctx.storage.setAlarm==="function"){
+      const due=Date.now()+60*60*1000;
+      const existing=typeof p.ctx.storage.getAlarm==="function"
+        ? await p.ctx.storage.getAlarm():null;
+      if(existing==null||existing>due)await p.ctx.storage.setAlarm(due);
+    }
     await p.env.MEDIA.put(key(p,h),bytes,{httpMetadata:{contentType:sniff.mime},customMetadata:{hash:h}});
     if(profileDeleted(p)){
       // An upload already in flight when the account was deleted must not
@@ -157,13 +165,53 @@ async function missing(p,req){
   }
   return json({missing:absent,usage:usage(p)});
 }
+/**
+ * Recover media committed to R2 just before the Durable Object was interrupted.
+ * The R2 prefix is scoped to the authenticated user, so other users' files are
+ * never inspected. We never delete from an unreadable/missing profile snapshot.
+ *
+ * No public API calls this directly: only the same ProfileDO's GC alarm or
+ * explicitly requested sweep uses it, holding the per-object maintenance gate.
+ */
+export async function reconcileOrphans(p,state) {
+  const name=p.ctx.id?.name;
+  if(typeof name!=="string"||!name.startsWith("profile:"))throw Error("missing profile identity");
+  const prefix="users/"+name.slice(8)+"/media/";
+  const refs=referencedHashes(state);
+  let cursor,restored=0;
+  for(let pageNumber=0;pageNumber<1000;pageNumber++){
+    const page=await p.env.MEDIA.list({prefix,limit:1000,...(cursor?{cursor}:{})});
+    for(const candidate of page.objects){
+      const hash=candidate.key.slice(prefix.length);
+      if(!HASH_RE.test(hash)||row(p,hash))continue;
+      const obj=await p.env.MEDIA.head(candidate.key);
+      if(!obj)continue; // deleted by another task after the listing
+      const mime=obj.httpMetadata?.contentType;
+      if(!TYPES[mime])continue; // unknown bytes must never become a downloadable file
+      const uploaded=Date.parse(obj.uploaded instanceof Date?obj.uploaded.toISOString():String(obj.uploaded||""));
+      // Invalid or unavailable object dates must extend, never shorten, GC grace.
+      const since=refs.has(hash)?null:(Number.isFinite(uploaded)?Math.min(uploaded,Date.now()):Date.now());
+      p.sql.exec("INSERT OR IGNORE INTO media_files(hash,mime,size,status,token,expires,unreferenced_since) VALUES (?,?,?,'ready',NULL,NULL,?)",
+        hash,mime,obj.size,since);
+      restored++;
+    }
+    if(!page.truncated)break;
+    if(!page.cursor||page.cursor===cursor)throw Error("R2 listing cursor did not advance");
+    cursor=page.cursor;
+    if(pageNumber===999)throw Error("R2 reconciliation exceeded page limit");
+  }
+  return restored;
+}
+
 export async function garbageCollect(p,graceMs){
+  if(profileDeleted(p))return json({removed:0,freedBytes:0,usage:usage(p)});
   if(p.mediaSweepRunning)return err(429,"busy",{retryAfter:5});
   const {state,unreadable}=p.current();
   if(unreadable||!state)return json({removed:0,freedBytes:0,usage:usage(p)});
   p.mediaSweepRunning=true;
   let removed=0,freedBytes=0;
   try{
+    await reconcileOrphans(p,state);
     const refs=referencedHashes(state),now=Date.now();
     for(const f of p.sql.exec("SELECT hash,size,unreferenced_since FROM media_files WHERE status='ready'").toArray()){
       if(refs.has(f.hash)){
@@ -191,7 +239,11 @@ export async function scheduleGarbageCollection(p){
   if(!p.env.MEDIA||typeof p.ctx.storage.setAlarm!=="function")return;
   const entry=p.sql.exec("SELECT MIN(unreferenced_since) AS next FROM media_files WHERE status='ready' AND unreferenced_since IS NOT NULL").toArray()[0];
   if(entry.next===null){
-    if(typeof p.ctx.storage.deleteAlarm==="function")await p.ctx.storage.deleteAlarm();
+    const reservations=p.sql.exec("SELECT COUNT(*) AS n FROM media_files WHERE status='reserved'").toArray()[0].n;
+    if(reservations){
+      // Pending or orphaned uploads must not be forgotten after a DO crash.
+      await p.ctx.storage.setAlarm(Date.now()+6*60*60*1000);
+    }else if(typeof p.ctx.storage.deleteAlarm==="function")await p.ctx.storage.deleteAlarm();
     return;
   }
   const due=Number(entry.next)+limits(p.env).gcGraceDays*86400000;
@@ -210,6 +262,7 @@ export async function mediaRequest(p,req){
   const m=/^\/api\/media\/([0-9a-f]{64})$/.exec(path);
   if(m&&method==="GET")return download(p,m[1]);
   if(m&&method==="PUT"){
+    if(p.mediaSweepRunning)return json({error:"media maintenance in progress"},503);
     const wait=takeRate(p,"upload",limits(p.env).uploadsPerHour,3600000);
     if(wait)return json({error:"too many uploads, try again later",code:"locked",retryAfter:wait},429,{"Retry-After":String(wait)});
     return upload(p,req,m[1]);

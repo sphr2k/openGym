@@ -14,11 +14,13 @@ import assert from "node:assert/strict";
 const base = process.env.OPENGYM_TEST_URL || "http://127.0.0.1:8791";
 const rpID = new URL(base).hostname;
 const origin = new URL(base).origin;
+const stageHeaders = process.env.OPENGYM_STAGE_KEY ?
+  {"X-OpenGym-Stage-Key":process.env.OPENGYM_STAGE_KEY} : {};
 const j = async res => ({status:res.status,headers:res.headers,body:await res.json()});
 const api = async (path, method = "GET", body, headers = {}) =>
   j(await fetch(base + path,{
     method,
-    headers:{...(body?{"Content-Type":"application/json"}:{}),...headers},
+    headers:{...stageHeaders,...(body?{"Content-Type":"application/json"}:{}),...headers},
     ...(body?{body:JSON.stringify(body)}:{})
   }));
 const post=(p,b,h={})=>api(p,"POST",b,h);
@@ -190,7 +192,7 @@ console.log("Live device-link OK: proof, 60-bit code, new WebAuthn registration,
 const image=Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0]),randomBytes(120)]);
 const imageHash=hash(image).toString("hex");
 const apiMedia=async (method,hashValue,content=image,mime="image/jpeg",headers=loginCookie)=>
-  fetch(base+"/api/media/"+hashValue,{method,headers:{...headers,...(method==="PUT"?{"Content-Type":mime}:{})},
+  fetch(base+"/api/media/"+hashValue,{method,headers:{...stageHeaders,...headers,...(method==="PUT"?{"Content-Type":mime}:{})},
     ...(method==="PUT"?{body:content}:{})});
 const initialMissing=ok(await post("/api/media/missing",{hashes:[imageHash]},loginCookie),"media missing initial");
 assert.deepEqual(initialMissing.missing,[imageHash]);

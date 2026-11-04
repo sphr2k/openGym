@@ -32,6 +32,7 @@ jobs:
       - run: npm run build --prefix frontend
       - run: node scripts/catalogue/stage-media.mjs frontend/dist
       - run: npm run check --prefix cloudflare
+      - run: npm run build:staging --prefix cloudflare
       - name: Run Wrangler DO compatibility tests
         shell: bash
         run: |

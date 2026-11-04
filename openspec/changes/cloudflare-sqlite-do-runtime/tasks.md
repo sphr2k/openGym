@@ -12,16 +12,20 @@
 ## Profile sync
 - [x] Implement per-user ProfileDO with original /api/data and /api/data/rev contract
 - [x] Reuse original stampPut; test invalid input, stale revision/write ID, reset and concurrency
-- [ ] Confirm persistence after DO restart
+- [x] Verify persistence across AccountDO reconstruction and SQLite reopen in tests
+- [ ] Verify persistence across real remote Cloudflare DO eviction/restart
 
 ## Media/compatibility/deployment
-- [ ] Implement authenticated R2 media APIs and hash/mime validations
+- [x] Implement authenticated R2 media APIs and hash/mime validations
 - [x] Add/rename/remove passkeys with fresh WebAuthn assertion; protect last sign-in method
 - [x] Revoke credentials before account deletion, idempotent R2/SQLite cleanup with durable alarm retries
 - [x] Add per-user automatic R2 garbage collection with 14-day grace and manual immediate sweep
+- [x] Reconcile orphaned R2 objects after lost SQLite commits, with a DO wakeup recorded before upload
 - [x] Preserve web-to-web device-link flow with one-use 60-bit code and atomic passkey creation
 - [x] Persist per-user media rate limits and test account deletion with in-flight uploads
 - [ ] Implement admin-generated recovery codes, admin APIs, watch relay and optional notifications with full compatibility tests
-- [ ] Frontend asset deployment with exercise catalogue
-- [ ] Test unmodified mobile client pairing and workout sync
-- [ ] Publish branch and draft PR, deployment/backup docs
+- [x] Deploy guarded staging Worker with full exercise catalogue, dedicated R2 bucket and DO SQLite
+- [x] Exercise unmodified mobile-client HTTP contract using synthetic WebAuthn in Wrangler
+- [ ] Test actual App Store iOS client against a production-like authenticated deployment
+- [x] Push feature branch to public fork without PRs and document protected deployment
+- [ ] Implement backup/migration and public production deployment instructions
