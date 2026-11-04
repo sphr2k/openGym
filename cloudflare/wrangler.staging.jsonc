@@ -22,5 +22,5 @@
     "run_worker_first": true
   },
   "observability": { "enabled": true },
-  "vars": { "ALLOW_GUEST": "true", "FIRST_USER_ADMIN": "false", "STAGING_LOCKED": "true" }
+  "vars": { "ALLOW_GUEST": "true", "FIRST_USER_ADMIN": "false" }
 }

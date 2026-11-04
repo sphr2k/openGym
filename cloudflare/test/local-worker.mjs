@@ -117,7 +117,8 @@ const loginOpt=ok(await post("/api/login/options",{}),"login/options");
 const proof=assertion(loginOpt.options.challenge);
 const paired=ok(await post("/api/pair/create",{cid:loginOpt.cid,credential:proof},loginCookie),"pair/create");
 assert.match(paired.code,/^[A-HJ-NP-Z2-9]{8}$/);
-const redeemed=ok(await post("/api/pair/redeem",{code:paired.code}),"pair/redeem");
+const redeemed=ok(await post("/api/pair/redeem",{code:paired.code},
+  {Origin:"capacitor://localhost","Sec-Fetch-Site":"cross-site"}),"pair/redeem native origin");
 assert.equal(redeemed.user.id,user.id);
 const replay=await post("/api/pair/redeem",{code:paired.code});
 assert.equal(replay.status,400);

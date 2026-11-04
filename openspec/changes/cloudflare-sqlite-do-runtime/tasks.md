@@ -25,8 +25,12 @@
 - [x] Persist per-user media rate limits and test account deletion with in-flight uploads
 - [ ] Implement admin-generated recovery codes, admin APIs, watch relay and optional notifications with full compatibility tests
 - [x] Deploy guarded staging Worker with full exercise catalogue, dedicated R2 bucket and DO SQLite
-- [x] Force Worker-first static asset routing and verify anonymous app/API/media responses are 404
-- [x] Exercise unmodified mobile-client HTTP contract using synthetic WebAuthn in Wrangler
+- [x] Force Worker-first static asset routing
+- [x] Bind a self-hosted Cloudflare Access app to the staging workers.dev hostname
+- [x] Configure owner-only browser login and dedicated iOS service-token policy
+- [x] Bypass Access on OPTIONS, verify 204 native CORS preflight while anonymous GET redirects to Access
+- [x] Remove incompatible legacy staging header gate
+- [x] Exercise unmodified mobile-client HTTP contract using synthetic WebAuthn in Wrangler (including native Origin on initial pairing)
 - [ ] Test actual App Store iOS client against a production-like authenticated deployment
 - [x] Push feature branch to public fork without PRs and document protected deployment
 - [ ] Implement backup/migration and public production deployment instructions

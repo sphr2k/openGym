@@ -28,10 +28,11 @@ are not complete. Missing optional routes return HTTP 404. This is a restricted
 staging deployment, not a public user-facing release.
 
 **Deployment verified:** opengym-cloudflare-staging.janwer.workers.dev with its
-own R2 bucket, SQLite Durable Objects and 13,283 static assets. All requests are
-rejected without a private staging secret. The native App Store client cannot
-yet use this protected stage without a compatible access policy. Local Wrangler
-integration tests validate the existing mobile HTTP contract.
+own R2 bucket, SQLite Durable Objects and 13,283 static assets. Cloudflare
+Access is required for both the UI and API (owner browser login plus an
+explicit iOS Service Auth policy). The native app uses its existing
+Cloudflare Access Client ID/Secret support. Real native-device acceptance
+is still pending.
 
 
 ## Local development
@@ -51,28 +52,41 @@ npm run test:integration --prefix cloudflare
 
 Wrangler creates local SQLite Durable Objects and an R2 binding. The test intentionally creates its own temporary account using a synthetic WebAuthn authenticator.
 
-## Guarded Cloudflare staging
+## Cloudflare Access staging (actual deployment)
 
-Staging uses a separate Wrangler config and must never share production storage.
-From cloudflare/ after building the frontend and catalogue media:
+Staging uses a separate Wrangler config and never shares production storage.
+The verified deployed hostname is opengym-cloudflare-staging.janwer.workers.dev.
+Access application: openGym Staging, type self-hosted, bound to that exact
+workers.dev hostname; the owner browser policy permits only mail@janwerner.de.
+A separate Service Auth policy allows only service token openGym iOS Staging.
+Other Cloudflare Access service tokens cannot access this application.
 
-1. Create R2 bucket opengym-cloudflare-staging-media using Wrangler.
-2. Run npm run deploy:staging.
-3. Generate a strong random key in a private local secret store, then supply it
-   via stdin to: npx wrangler secret put STAGING_API_KEY --config wrangler.staging.jsonc
+The iOS app's existing CF-Access-Client-Id and CF-Access-Client-Secret headers
+are supported in frontend/src/lib/cf-access.js and api.js. Access passes native
+preflight OPTIONS requests to the Worker (options_preflight_bypass=true).
+The Worker returns the allowed methods and headers only for Capacitor/WebView
+origins. The first POST /api/pair/redeem intentionally permits the Capacitor
+origin without an openGym Bearer token: it is authenticated by the short-lived,
+single-use pairing code. All later data requests require the paired Bearer.
 
-If the STAGING_API_KEY binding is absent, the staging Worker fails closed with
-HTTP 404. Crucially, staging config sets assets.run_worker_first to true:
-without it Cloudflare would serve static assets before invoking the Worker
-and bypass the staging protection. The header X-OpenGym-Stage-Key must match it to access any route,
-including the static app. Never embed the key in browser JavaScript, HTML, a URL,
-or a public repository. The synthetic WebAuthn HTTP test supports private
-OPENGYM_TEST_URL and OPENGYM_STAGE_KEY environment variables.
+Staging config sets assets.run_worker_first=true. Without it, Cloudflare
+may serve public UI assets without invoking Worker code. The original
+STAGING_LOCKED header mechanism remains available for other isolated
+deployment targets but is disabled here because it is not supported by the
+unmodified browser and native clients.
 
-A public instance requires a separate security decision: do not remove the gate
-until account recovery, migrations, authorization, abuse limits and native app
-acceptance are complete. Cloudflare Access is an alternative only if the
-unmodified native app can supply the selected Access credentials.
+**User setup:**
+1. Open the staging hostname in a browser and authenticate with Cloudflare Access.
+2. In openGym register/sign in with a passkey and use Settings -> Pair the mobile app.
+3. In Cloudflare Zero Trust -> Access controls -> Service credentials ->
+   Service Tokens, find openGym iOS Staging and rotate its Client Secret.
+   The secret is only shown once; never commit it or paste it in a shared issue.
+4. In the native iOS app's Connect to server screen, enter the staging hostname,
+   the Cloudflare Access Client ID/Secret, and the single-use pairing code.
+
+The staging Access token uses a 90-day expiry. Each token rotation revokes the
+previous client secret. Full authorized remote and App Store iOS sync must be
+tested before production use.
 
 ## Cloudflare build / target configuration
 

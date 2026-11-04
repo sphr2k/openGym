@@ -83,10 +83,14 @@ export default {
       // Existing native apps use Authorization: Bearer and a separate origin.
       // Cookie-backed browser writes must come from our actual origin.
       const bearer = (request.headers.get("authorization") || "").startsWith("Bearer ");
-      if (!bearer && origin && origin !== ownOrigin) {
+      // The app must redeem its one-time pairing code BEFORE it has an openGym
+      // bearer. Allow only the fixed Capacitor WebView origins for this route;
+      // the one-time code remains the sole credential and is rate-limited.
+      const mobilePairing = route === "POST /api/pair/redeem" && MOBILE_ORIGINS.has(origin);
+      if (!bearer && !mobilePairing && origin && origin !== ownOrigin) {
         return json({error:"cross-origin request refused",code:"origin-mismatch",expected:ownOrigin},403);
       }
-      if (!bearer && request.headers.get("sec-fetch-site") === "cross-site") {
+      if (!bearer && !mobilePairing && request.headers.get("sec-fetch-site") === "cross-site") {
         return json({error:"cross-origin request refused",code:"origin-mismatch",expected:ownOrigin},403);
       }
     }
