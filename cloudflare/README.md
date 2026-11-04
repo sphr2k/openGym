@@ -35,6 +35,36 @@ Cloudflare Access Client ID/Secret support. Real native-device acceptance
 is still pending.
 
 
+## Profile persistence (clean-slate storage)
+
+Profiles are persisted in each user's SQLite-backed \`ProfileDO\` through the
+synchronous Drizzle durable-sqlite driver. The **stable, generic** storage
+schema contains \`profile_meta\`, \`profile_sections\`, and
+\`profile_fragments\`:
+
+- Each top-level JSON field is a section (ordered and tagged array/value).
+- Array elements are separate JSON values. Scalar values, unknown future
+  fields, and nested structures remain opaque JSON, not relational models.
+- Every value is split into at most 256 KiB UTF-8/BLOB chunks; the full JSON
+  is reconstructed before parsing. An empty array is represented by its
+  section alone. The HTTP API remains the upstream whole-profile sync API
+  (including its existing 5 MiB request-size limit).
+- A write replaces changed fragments and deletes removed ones together with
+  the new revision and media references inside one synchronous SQL transaction.
+  \`/api/data/rev\` reads metadata only.
+
+This is a **from-scratch** layout. It deliberately has no embedded legacy
+document reader, automatic conversion, or dual-write. A temporary fail-closed
+tripwire rejects databases containing the earlier \`document\` table, preventing
+accidental creation of an empty profile over existing data. That tripwire is
+tracked for removal by
+[Homelab #505](https://github.com/sphr2k/homelab/issues/505).
+The owner's existing staging data requires a **separate, verified one-shot
+migration before deploying this version**, tracked in
+[Homelab #494](https://github.com/sphr2k/homelab/issues/494).
+Do not deploy this branch directly over a legacy staging database.
+Docker-to-Cloudflare imports are a separate, optional future feature.
+
 ## Local development
 
 From the repository root:

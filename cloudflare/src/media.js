@@ -296,7 +296,7 @@ export async function deleteAllProfileData(p){
   }
   p.ctx.storage.transactionSync(()=>{
     p.sql.exec("DELETE FROM media_files");
-    p.sql.exec("DELETE FROM document");
+    p.store.clear();
   });
   return json({ok:true});
 }

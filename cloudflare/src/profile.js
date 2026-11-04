@@ -1,4 +1,5 @@
 import { stampPut } from "../../api/sync-stamps.js";
+import { ProfileStore } from "./profile-store.js";
 import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, garbageCollect, scheduleGarbageCollection, profileDeleted } from "./media.js";
 import { forClient, json, jsonBody, randomHex, validateProfile } from "./protocol.js";
 
@@ -14,26 +15,23 @@ export class ProfileDO {
     this.ctx = ctx;
     this.env = env;
     this.sql = ctx.storage.sql;
-    this.sql.exec(
-      "CREATE TABLE IF NOT EXISTS document (id INTEGER PRIMARY KEY CHECK (id = 1), body TEXT NOT NULL, revision INTEGER NOT NULL)"
-    );
+    this.store = new ProfileStore(ctx.storage);
     initMedia(this);
   }
 
   current() {
-    const row = this.sql.exec("SELECT body, revision FROM document WHERE id = 1").toArray()[0];
-    if (!row) return { state: null, rev: 0 };
-    try { return { state: JSON.parse(row.body), rev: row.revision }; }
-    catch { return { unreadable: true }; }
+    return this.store.current();
   }
 
   read(path) {
     if(profileDeleted(this))return json({error:"profile removed",code:"profile-deleted"},410);
+    if (path === "/api/data/rev") {
+      const { rev, wid, unreadable } = this.store.revision();
+      if (unreadable) return json({ error: "state unreadable" }, 503);
+      return json({ rev, ...(wid ? { wid } : {}) });
+    }
     const { state, rev, unreadable } = this.current();
     if (unreadable) return json({ error: "state unreadable" }, 503);
-    if (path === "/api/data/rev") {
-      return json({ rev, ...(state?._wid ? { wid: state._wid } : {}) });
-    }
     return json({ state: forClient(state), rev });
   }
 
@@ -74,13 +72,7 @@ export class ProfileDO {
       next._wids = [...(Array.isArray(cur?._wids) ? cur._wids : []), ...(cur?._wid ? [cur._wid] : [])]
         .filter(x => typeof x === "string").slice(-WID_KEEP);
       next._wid = randomHex(8);
-      let content;
-      try { content = JSON.stringify(next); }
-      catch (err) {
-        if (err instanceof RangeError) return json({ error: "invalid state" }, 400);
-        throw err;
-      }
-      this.sql.exec("INSERT INTO document(id, body, revision) VALUES (1, ?, ?) ON CONFLICT(id) DO UPDATE SET body = excluded.body, revision = excluded.revision", content, next._rev);
+      this.store.save(next, next._rev);
       noteReferences(this,next);
       // The externally returned revision intentionally differs if stampPut modified unknown fields:
       // matching Node behavior causes the client to pull the stamped state on the next check.

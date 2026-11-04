@@ -10,7 +10,7 @@ export function context() {
         sql: {
           exec(sql, ...params) {
             const statement = db.prepare(sql);
-            if (/^\s*SELECT\b/i.test(sql)) return { toArray: () => statement.all(...params) };
+            if (/^\s*SELECT\b/i.test(sql)) return { toArray: () => statement.all(...params), raw: () => ({ toArray: () => (statement.setReturnArrays(true), statement.all(...params)) }) };
             statement.run(...params);
             return { toArray: () => [] };
           }

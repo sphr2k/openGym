@@ -133,6 +133,15 @@ assert.equal(lost.status,409);
 const reloaded=ok(await api("/api/data","GET",undefined,loginCookie),"data after native put");
 assert.equal(reloaded.state.workouts.length,2);
 
+// Real Wrangler SQL storage, not Node SQLite mocks: one JSON element > 2 MB.
+const oversizedWorkout = {id:"oversized",notes:"Z".repeat(2 * 1024 * 1024 + 17)};
+const largeState = {...reloaded.state,workouts:[...reloaded.state.workouts,oversizedWorkout]};
+const largeSaved = ok(await put("/api/data",{state:largeState,baseRev:reloaded.rev,baseWid:reloaded.state._wid,stamped:true},bearer),"oversized native put");
+const largeRead = ok(await api("/api/data","GET",undefined,loginCookie),"oversized profile read");
+assert.equal(largeRead.state.workouts.at(-1).notes.length,oversizedWorkout.notes.length);
+assert.equal(largeRead.rev,largeSaved.rev);
+console.log("Real DO SQLite JSON chunking OK: >2 MiB single workout, persisted and read over HTTP");
+
 // Exercise the real Settings -> Passkeys flow with a second authenticator.
 const passkeys0=ok(await api("/api/account/passkeys","GET",undefined,loginCookie),"passkeys initial");
 assert.equal(passkeys0.passkeys.length,1);
