@@ -40,8 +40,10 @@ is still pending.
 Each user owns one SQLite-backed \`ProfileDO\`. The **entire original JSON profile**
 is stored as a single immutable object in the existing private R2 bucket under
 \`users/<user-id>/snapshots/\`. SQLite holds only the current revision, write ID,
-snapshot key, SHA-256 checksum, a short revision history and the existing media
-metadata. No JSON schema mapping, Drizzle or application-specific DB migrations
+snapshot key, SHA-256 checksum, a short revision history with the referenced
+media hashes of each retained snapshot, and the existing media metadata.
+Media reference extraction is shared with the original Node/Docker backend
+(`api/media-references.js`). No JSON schema mapping, Drizzle or application-specific DB migrations
 are required for new upstream fields.
 
 Writes load the snapshot, run the original \`stampPut\`, upload a *new* R2
@@ -61,7 +63,11 @@ lifecycle rule on the snapshot prefix. Intentional account deletion revokes
 access, purges R2 snapshots and retains temporary sweep wakeups for delayed
 uploads. Point-in-time recovery covers the DO SQLite pointer only, not R2
 objects; this retention policy is necessary for recoverability, not a backup
-substitute.
+substitute. Media GC uses the same retained-version set as snapshot GC, so
+manual sweeps cannot delete content needed by a historical snapshot.
+Expired media upload reservations and interrupted deletions are reconciled
+idempotently; the single per-DO alarm is also retained through account deletion
+to catch late R2 uploads.
 
 The client continues to send whole profiles and is **still subject to the
 existing 5 MiB HTTP request limit**. Only the SQLite per-row 2 MiB limit is
