@@ -24,14 +24,7 @@ export class ProfileStore {
     this.sql.exec("CREATE TABLE IF NOT EXISTS profile_history (revision INTEGER PRIMARY KEY, r2_key TEXT NOT NULL UNIQUE, committed_at INTEGER NOT NULL, sha256 TEXT NOT NULL, media_refs TEXT NOT NULL)");
   }
 
-  // Intentionally temporary safety tripwire only; no legacy reader or migration.
-  assertCleanSlate() {
-    if(this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document'").toArray().length)
-      throw Error("legacy document schema: run the external one-shot migration before deploy");
-  }
-
   revision() {
-    this.assertCleanSlate();
     return row(this)??blank();
   }
 
@@ -60,7 +53,6 @@ export class ProfileStore {
   // Must happen *before* any asynchronous R2 PUT. The durable gc_active bit
   // prevents the existing media alarm scheduler from cancelling our sweep.
   async armSweep() {
-    this.assertCleanSlate();
     this.ctx.storage.transactionSync(()=>{
       this.sql.exec("INSERT INTO profile_meta(id,revision,gc_active) VALUES (1,0,1) ON CONFLICT(id) DO UPDATE SET gc_active=1");
     });
