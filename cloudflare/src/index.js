@@ -1,7 +1,7 @@
 import { AccountDO } from "./accounts.js";
 import { ProfileDO } from "./profile.js";
 import { json, BODY_LIMIT } from "./protocol.js";
-import { excusedOn, nudgeFor } from "../../api/nudge.js";
+import { validNudgeDate, nudgeCheckStatus } from "../../api/nudge-check-status.js";
 import { limits, mediaConfig } from "./media-validation.js";
 
 export { AccountDO, ProfileDO };
@@ -118,19 +118,14 @@ export default {
           const profile = env.PROFILES.getByName("profile:" + id);
           if (route === NUDGE_ROUTE) {
             const date = url.searchParams.get("date") || "";
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + "T00:00:00Z"))) {
+            if (!validNudgeDate(date)) {
               response = json({error:"date must be YYYY-MM-DD",code:"date-invalid"},400);
             } else {
               const answer = await profile.fetch(new Request(new URL("/api/data",url),{method:"GET"}));
               if (!answer.ok) response = answer;
               else {
                 const {state,rev} = await answer.json();
-                const snapshot = state || {};
-                const workouts = Array.isArray(snapshot.workouts) ? snapshot.workouts : [];
-                const done = workouts.some(w => w && w.d === date) || excusedOn(snapshot,date);
-                let nudge = false;
-                try { nudge = !done && !!nudgeFor(snapshot,date); } catch { nudge = true; }
-                response = json({date,done,nudge,rev});
+                response = json(nudgeCheckStatus(state,date,rev));
               }
             }
           } else {

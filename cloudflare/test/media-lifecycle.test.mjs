@@ -5,6 +5,7 @@ import {context} from "./sqlite.mjs";
 import {ProfileDO} from "../src/profile.js";
 
 const sha=b=>createHash("sha256").update(b).digest("hex");
+const mediaCount=blobs=>[...blobs.keys()].filter(k=>k.includes("/media/")).length;
 const jpeg=()=>Buffer.concat([Buffer.from([0xff,0xd8,0xff,0xe0]),randomBytes(124)]);
 const raw=(method,path,bytes,mime="image/jpeg")=>
   new Request("https://gym.example"+path,{method,headers:{"content-type":mime},body:bytes});
@@ -20,7 +21,7 @@ function fixture(name,opts={}){
   const blobs=opts.blobs||new Map();
   const media={
     async put(key,bytes){blobs.set(key,Buffer.from(bytes));return {size:bytes.length};},
-    async get(key){const b=blobs.get(key);return b?{size:b.length,body:new Blob([b]).stream()}:null;},
+    async get(key){const b=blobs.get(key);return b?{size:b.length,body:new Blob([b]).stream(),text:async()=>b.toString("utf8")}:null;},
     async head(key){const b=blobs.get(key);return b?{
       size:b.length,httpMetadata:{contentType:"image/jpeg"},
       uploaded:opts.uploaded||new Date()
@@ -53,11 +54,11 @@ test("grace-period alarm deletes only unreferenced blobs, with a readable profil
   assert.equal((await profile.fetch(raw("PUT","/api/media/"+hb,b))).status,201);
   // There is no saved snapshot yet: an alarm must retain every blob.
   await profile.alarm();
-  assert.equal(blobs.size,2);
+  assert.equal(mediaCount(blobs),2);
   const put=await profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([ha]),baseRev:0,stamped:true}),"application/json"));
   assert.equal(put.status,200);
   await profile.alarm();
-  assert.equal(blobs.size,1);
+  assert.equal(mediaCount(blobs),1);
   assert.equal(blobs.has("users/jan/media/"+ha),true);
   assert.equal(blobs.has("users/jan/media/"+hb),false);
   const miss=await parse(await profile.fetch(post("/api/media/missing",{hashes:[ha,hb]})));
@@ -74,11 +75,11 @@ test("failed R2 delete remains retryable rather than dropping SQLite state",asyn
   let times=0;
   f.env.MEDIA.delete=async()=>{if(!times++){throw Error("temporary R2 outage");}return original("users/retry/media/"+h);};
   await f.profile.alarm();
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
   const metadata=f.profile.sql.exec("SELECT status FROM media_files WHERE hash=?",h).toArray()[0];
-  assert.equal(metadata.status,"ready");
+  assert.equal(metadata.status,"deleting");
   await f.profile.alarm();
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
 });
 
 test("quota is atomic and refuses uploads over configured limit",async()=>{
@@ -89,7 +90,7 @@ test("quota is atomic and refuses uploads over configured limit",async()=>{
   const denied=await parse(await f.profile.fetch(raw("PUT","/api/media/"+sha(other),other)));
   assert.equal(denied.status,413);
   assert.equal(denied.body.code,"media-quota");
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
 });
 
 test("account deletion's internal profile purge is idempotent, including R2",async()=>{
@@ -98,7 +99,7 @@ test("account deletion's internal profile purge is idempotent, including R2",asy
   await f.profile.fetch(raw("PUT","/api/media/"+h,b));
   const first=await parse(await f.profile.fetch(post("/_internal/delete-all")));
   assert.deepEqual(first.body,{ok:true});
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
   const second=await parse(await f.profile.fetch(post("/_internal/delete-all")));
   assert.deepEqual(second.body,{ok:true});
   const forbidden=await parse(await f.profile.fetch(new Request("https://gym.example/api/data")));
@@ -127,7 +128,7 @@ test("deletion tombstone prevents an in-flight R2 upload from resurrecting blobs
   const upload=await parse(await pending);
   assert.equal(upload.status,410);
   assert.equal(upload.body.code,"profile-deleted");
-  assert.equal(f.blobs.size,0);
+  assert.equal(mediaCount(f.blobs),0);
   const reopened=new ProfileDO(f.ctx,f.env);
   assert.equal((await reopened.fetch(new Request("https://gym.example/api/data"))).status,410);
   assert.equal((await reopened.fetch(raw("PUT","/api/media/"+hash,data))).status,410);
@@ -142,7 +143,7 @@ test("SQLite-backed media throttles persist across Durable Object restarts",asyn
   assert.equal(blocked.status,429);
   assert.equal(blocked.body.code,"locked");
   assert.ok(blocked.body.retryAfter>0);
-  assert.equal(f.blobs.size,1);
+  assert.equal(mediaCount(f.blobs),1);
 });
 test("manual sweep enforces the upstream ten-per-hour budget",async()=>{
   const f=fixture("sweeper");
@@ -204,4 +205,132 @@ test("reserve persists a wakeup before the first R2 PUT, enabling interrupted-up
   const b=jpeg();
   assert.equal((await f.profile.fetch(raw("PUT","/api/media/"+sha(b),b))).status,201);
   assert.equal(observedAlarm,true,"alarm must be registered before R2 write");
+});
+
+
+test("PITR retains a historical workout photo even when current profile and manual sweep omit it",async()=>{
+  const f=fixture("pitr-photo");
+  const bytes=jpeg(),h=sha(bytes),r2="users/pitr-photo/media/"+h;
+  assert.equal((await f.profile.fetch(raw("PUT","/api/media/"+h,bytes))).status,201);
+  const first=await parse(await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([h]),baseRev:0,stamped:true}),"application/json")));
+  assert.equal(first.status,200);
+  const oldMeta=f.profile.sql.exec("SELECT revision,write_id,snapshot_key,sha256 FROM profile_meta WHERE id=1").toArray()[0];
+  const second=await parse(await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state(),baseRev:first.body.rev,baseWid:first.body.wid,stamped:true}),"application/json")));
+  assert.equal(second.status,200);
+  // The media would normally have passed even a zero-day manual sweep.
+  f.profile.sql.exec("UPDATE media_files SET unreferenced_since=? WHERE hash=?",Date.now()-45*86400000,h);
+  const sweep=await parse(await f.profile.fetch(post("/api/media/sweep")));
+  assert.equal(sweep.status,200);
+  assert.equal(f.blobs.has(r2),true,"historical PITR reference must survive manual sweep");
+  assert.ok(f.profile.store.protectedMediaHashes().has(h));
+  // SQLite PITR restores the pointer; the R2 media must still exist and
+  // remain visible. Local Wrangler does not implement DO's PITR bookmarks.
+  const newer=f.profile.sql.exec("SELECT revision,write_id,snapshot_key,sha256 FROM profile_meta WHERE id=1").toArray()[0];
+  f.profile.sql.exec("UPDATE profile_meta SET revision=?,write_id=?,snapshot_key=?,sha256=? WHERE id=1",
+    oldMeta.revision,oldMeta.write_id,oldMeta.snapshot_key,oldMeta.sha256);
+  const restored=await parse(await f.profile.fetch(new Request("https://gym.example/api/data")));
+  assert.equal(restored.body.state.customEx[0].media.hash,h);
+  assert.equal((await f.profile.fetch(new Request("https://gym.example/api/media/"+h))).status,200);
+  f.profile.sql.exec("UPDATE profile_meta SET revision=?,write_id=?,snapshot_key=?,sha256=? WHERE id=1",
+    newer.revision,newer.write_id,newer.snapshot_key,newer.sha256);
+  // Simulate both revisions aging out except the current; the previous
+  // snapshot remains as the pre-PITR anchor until current crosses cutoff.
+  const now=Date.now(),day=86400000;
+  f.profile.sql.exec("UPDATE profile_history SET committed_at=? WHERE revision=? ",now-80*day,first.body.rev);
+  f.profile.sql.exec("UPDATE profile_history SET committed_at=? WHERE revision=? ",now-60*day,second.body.rev);
+  await f.profile.store.sweep(false,now);
+  assert.equal(f.profile.store.protectedMediaHashes().has(h),false);
+  assert.equal(f.blobs.has(r2),true);
+  await f.profile.alarm();
+  assert.equal(f.blobs.has(r2),false,"unreachable historical media can eventually be collected");
+});
+
+test("expired reserved lease with completed R2 PUT is recovered without new upload",async()=>{
+  const f=fixture("expired-reservation");
+  const bytes=jpeg(),h=sha(bytes),r2="users/expired-reservation/media/"+h;
+  assert.equal((await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([h]),stamped:true}),"application/json"))).status,200);
+  f.profile.sql.exec("INSERT INTO media_files(hash,mime,size,status,token,expires,unreferenced_since) VALUES (?, 'image/jpeg', ?,'reserved','lost-token', ?,?)",
+    h,bytes.length,Date.now()-3*3600000,Date.now()-3*3600000);
+  f.blobs.set(r2,bytes);
+  await f.profile.alarm();
+  const stored=f.profile.sql.exec("SELECT status,token,expires FROM media_files WHERE hash=?",h).toArray()[0];
+  assert.equal(stored.status,"ready");
+  assert.equal(stored.token,null);
+  assert.equal(stored.expires,null);
+  assert.equal((await f.profile.fetch(new Request("https://gym.example/api/media/"+h))).status,200);
+});
+
+test("missing R2 upload clears old lease but delayed object is re-discovered on later alarm",async()=>{
+  const f=fixture("late-upload");
+  const bytes=jpeg(),h=sha(bytes),r2="users/late-upload/media/"+h;
+  await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([h]),stamped:true}),"application/json"));
+  f.profile.sql.exec("INSERT INTO media_files(hash,mime,size,status,token,expires,unreferenced_since) VALUES (?, 'image/jpeg', ?,'reserved','lost-token', ?,?)",
+    h,bytes.length,Date.now()-4*3600000,Date.now()-4*3600000);
+  await f.profile.alarm();
+  assert.equal(f.profile.sql.exec("SELECT count(*) AS n FROM media_files WHERE hash=?",h).toArray()[0].n,0);
+  f.blobs.set(r2,bytes); // the original, ambiguous PUT finally becomes visible
+  await f.profile.alarm();
+  assert.equal(f.profile.sql.exec("SELECT status FROM media_files WHERE hash=?",h).toArray()[0].status,"ready");
+  assert.equal(f.blobs.has(r2),true);
+});
+
+test("interrupted deleting state is retried idempotently on next alarm",async()=>{
+  const f=fixture("delete-recovery");
+  const bytes=jpeg(),h=sha(bytes),r2="users/delete-recovery/media/"+h;
+  await f.profile.fetch(raw("PUT","/api/media/"+h,bytes));
+  await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state(),stamped:true}),"application/json"));
+  f.profile.sql.exec("UPDATE media_files SET status='deleting',unreferenced_since=? WHERE hash=?",Date.now()-20*86400000,h);
+  await f.profile.alarm();
+  assert.equal(f.blobs.has(r2),false);
+  assert.equal(f.profile.sql.exec("SELECT count(*) AS n FROM media_files WHERE hash=?",h).toArray()[0].n,0);
+  await f.profile.alarm();
+  assert.equal(f.profile.sql.exec("SELECT count(*) AS n FROM media_files WHERE hash=?",h).toArray()[0].n,0);
+});
+
+test("deleting state cannot remove media referenced by retained PITR snapshot",async()=>{
+  const f=fixture("delete-protected");
+  const bytes=jpeg(),h=sha(bytes),r2="users/delete-protected/media/"+h;
+  await f.profile.fetch(raw("PUT","/api/media/"+h,bytes));
+  const r1=await parse(await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state([h]),stamped:true}),"application/json")));
+  assert.equal(r1.status,200);
+  await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state(),baseRev:r1.body.rev,baseWid:r1.body.wid,stamped:true}),"application/json"));
+  f.profile.sql.exec("UPDATE media_files SET status='deleting',unreferenced_since=? WHERE hash=?",Date.now()-90*86400000,h);
+  await f.profile.alarm();
+  assert.equal(f.profile.sql.exec("SELECT status FROM media_files WHERE hash=?",h).toArray()[0].status,"ready");
+  assert.equal(f.blobs.has(r2),true);
+});
+
+test("delayed R2 media object created after account deletion is removed by the next alarm",async()=>{
+  const f=fixture("late-after-delete");
+  const file=jpeg(),h=sha(file),key="users/late-after-delete/media/"+h;
+  await f.profile.fetch(raw("PUT","/api/data",JSON.stringify({state:state(),stamped:true}),"application/json"));
+  const deleted=await parse(await f.profile.fetch(post("/_internal/delete-all")));
+  assert.equal(deleted.status,200);
+  // Simulate a PUT with an unknown outcome completing AFTER the initial
+  // delete returned, without any further client traffic or uploads.
+  f.blobs.set(key,file);
+  assert.equal(f.blobs.has(key),true);
+  await f.profile.alarm();
+  assert.equal(f.blobs.has(key),false);
+  assert.equal((await f.profile.fetch(new Request("https://gym.example/api/data"))).status,410);
+});
+
+test("large concurrent uploads reserve memory before reading second request",async()=>{
+  const f=fixture("memory-budget",{env:{MEDIA_IMAGE_MAX_MB:"30"}});
+  const a=Buffer.alloc(25*1024*1024,0x61),b=Buffer.alloc(25*1024*1024,0x62);
+  a.set([0xff,0xd8,0xff,0xe0],0);
+  b.set([0xff,0xd8,0xff,0xe0],0);
+  let release,started;
+  const hold=new Promise(r=>{release=r;});
+  const reached=new Promise(r=>{started=r;});
+  const put=f.env.MEDIA.put.bind(f.env.MEDIA);
+  f.env.MEDIA.put=async(...args)=>{started();await hold;return put(...args);};
+  const first=f.profile.fetch(raw("PUT","/api/media/"+sha(a),a));
+  await reached;
+  assert.ok(f.profile.mediaUploadBytes>=30*1024*1024);
+  const second=await parse(await f.profile.fetch(raw("PUT","/api/media/"+sha(b),b)));
+  assert.equal(second.status,429,"reject second large upload before allocating a second full payload");
+  release();
+  assert.equal((await first).status,201);
+  assert.equal(f.profile.mediaUploadBytes,0);
 });
