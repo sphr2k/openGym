@@ -79,3 +79,49 @@ test("account deletion revokes immediately and retries interrupted remote cleanu
   assert.equal(cleaned,"u1");
   assert.equal(a.queryOne("SELECT COUNT(*) AS n FROM pending_deletions").n,0);
 });
+
+
+test("session contract: expiry, version revocation and disabled account fail closed",async()=>{
+  const {ctx}=context(),a=new AccountDO(ctx,{});
+  a.sql.exec("INSERT INTO users(id,name,created,sv) VALUES ('security-u','Verifier','2026-11-04',0)");
+  const user=a.queryOne("SELECT * FROM users WHERE id='security-u'");
+  const cookieToken=await a.sign(user,"c");
+  const bearerToken=await a.sign(user,"b");
+  const cookie={cookie:"__Host-gymsid="+cookieToken};
+  const bearer={authorization:"Bearer "+bearerToken};
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,cookie))).status,200);
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,bearer))).status,200);
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,{authorization:"Bearer "+cookieToken}))).status,401);
+  const old=Date.now()-1000,expiredPayload=["security-u",old,0,"c"].join(":");
+  const signature=Buffer.from(await crypto.subtle.sign("HMAC",await a.key(),new TextEncoder().encode(expiredPayload))).toString("base64url");
+  const expired={cookie:"__Host-gymsid="+expiredPayload+"."+signature};
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,expired))).status,401);
+  a.sql.exec("UPDATE users SET sv=sv+1 WHERE id='security-u'");
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,cookie))).status,401);
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,bearer))).status,401);
+  const changed=a.queryOne("SELECT * FROM users WHERE id='security-u'");
+  const fresh=await a.sign(changed,"c");
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,{cookie:"__Host-gymsid="+fresh}))).status,200);
+  a.sql.exec("UPDATE users SET disabled=1 WHERE id='security-u'");
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,{cookie:"__Host-gymsid="+fresh}))).status,401);
+});
+
+test("session contract: malformed or ambiguous cookie cannot override a valid bearer",async()=>{
+  const {ctx}=context(),a=new AccountDO(ctx,{});
+  a.sql.exec("INSERT INTO users(id,name,created) VALUES ('u1','Verifier','2026-11-04')");
+  const user=a.queryOne("SELECT * FROM users WHERE id='u1'");
+  const good=await a.sign(user,"c");
+  const bearer=await a.sign(user,"b");
+  const request=cookie=>req("/api/me","GET",undefined,{cookie});
+  for(const c of ["__Host-gymsid="+good+"; __Host-gymsid=other",
+    "__Host-gymsid="+good+"; __Host-gymsid="+good+"!",
+    "gymsid="+good+"; gymsid=other"]){
+    assert.equal((await a.fetch(request(c))).status,401);
+  }
+  // A valid token in a supported cookie format continues to authenticate.
+  assert.equal((await a.fetch(request("gymsid="+good))).status,200);
+  assert.equal((await a.fetch(req("/api/me","GET",undefined,{authorization:"Bearer "+bearer}))).status,200);
+  const noProof=await parsed(await a.fetch(req("/api/pair/create","POST",{}, {cookie:"gymsid="+good})));
+  assert.equal(noProof.status,403);
+  assert.equal(noProof.body.code,"passkey-required");
+});
