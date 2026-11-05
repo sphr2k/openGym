@@ -1,6 +1,7 @@
 // The only canonical profile is an immutable R2 JSON snapshot selected by a
 // synchronous SQLite pointer. No application-specific JSON schema or migrations.
 import { randomHex } from "./protocol.js";
+import { referencedHashes } from "../../api/media-references.js";
 
 export const SNAPSHOT_GRACE_MS = 35 * 86400000; // 30-day DO PITR + five-day cushion
 export const ORPHAN_GRACE_MS = 24 * 3600000;
@@ -20,17 +21,10 @@ export class ProfileStore {
     this.env=env;
     this.sql=ctx.storage.sql;
     this.sql.exec("CREATE TABLE IF NOT EXISTS profile_meta (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, write_id TEXT, snapshot_key TEXT, sha256 TEXT, committed_at INTEGER, gc_active INTEGER NOT NULL DEFAULT 0, deleted_at INTEGER)");
-    this.sql.exec("CREATE TABLE IF NOT EXISTS profile_history (revision INTEGER PRIMARY KEY, r2_key TEXT NOT NULL UNIQUE, committed_at INTEGER NOT NULL, sha256 TEXT NOT NULL)");
-  }
-
-  // Intentionally temporary safety tripwire only; no legacy reader or migration.
-  assertCleanSlate() {
-    if(this.sql.exec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='document'").toArray().length)
-      throw Error("legacy document schema: run the external one-shot migration before deploy");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS profile_history (revision INTEGER PRIMARY KEY, r2_key TEXT NOT NULL UNIQUE, committed_at INTEGER NOT NULL, sha256 TEXT NOT NULL, media_refs TEXT NOT NULL)");
   }
 
   revision() {
-    this.assertCleanSlate();
     return row(this)??blank();
   }
 
@@ -59,7 +53,6 @@ export class ProfileStore {
   // Must happen *before* any asynchronous R2 PUT. The durable gc_active bit
   // prevents the existing media alarm scheduler from cancelling our sweep.
   async armSweep() {
-    this.assertCleanSlate();
     this.ctx.storage.transactionSync(()=>{
       this.sql.exec("INSERT INTO profile_meta(id,revision,gc_active) VALUES (1,0,1) ON CONFLICT(id) DO UPDATE SET gc_active=1");
     });
@@ -88,8 +81,37 @@ export class ProfileStore {
     const now=Date.now();
     this.sql.exec("INSERT INTO profile_meta(id,revision,write_id,snapshot_key,sha256,committed_at,gc_active) VALUES (1,?,?,?,?,?,1) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,write_id=excluded.write_id,snapshot_key=excluded.snapshot_key,sha256=excluded.sha256,committed_at=excluded.committed_at,gc_active=1",
       state._rev,state._wid,snapshot.key,snapshot.hash,now);
-    this.sql.exec("INSERT INTO profile_history(revision,r2_key,committed_at,sha256) VALUES (?,?,?,?)",state._rev,snapshot.key,now,snapshot.hash);
+    // Domain-level media discovery is shared with the Node backend. R2/DO
+    // stores only a compact retention index, not a second profile model.
+    // It is committed atomically with the snapshot pointer.
+    this.sql.exec("INSERT INTO profile_history(revision,r2_key,committed_at,sha256,media_refs) VALUES (?,?,?,?,?)",
+      state._rev,snapshot.key,now,snapshot.hash,JSON.stringify([...referencedHashes(state)].sort()));
     return true;
+  }
+
+  // Same PITR selection rule for snapshot GC *and* media reachability.
+  // Includes the current version and the last revision that was live
+  // at the start of the 35-day safety window.
+  retainedVersions(now=Date.now()) {
+    const all=this.sql.exec("SELECT revision,r2_key,committed_at,media_refs FROM profile_history ORDER BY revision").toArray();
+    const cutoff=now-SNAPSHOT_GRACE_MS;
+    const current=this.revision().key;
+    const anchor=[...all].reverse().find(x=>x.committed_at<cutoff);
+    const retained=all.filter(x=>x.committed_at>=cutoff || x.r2_key===anchor?.r2_key || x.r2_key===current);
+    if(current && !retained.some(x=>x.r2_key===current))
+      throw Error("current snapshot is missing from history");
+    return {all,retained};
+  }
+
+  protectedMediaHashes(now=Date.now()) {
+    const protectedHashes=new Set();
+    for(const version of this.retainedVersions(now).retained){
+      const hashes=JSON.parse(version.media_refs);
+      if(!Array.isArray(hashes) || !hashes.every(h=>typeof h==="string" && /^[0-9a-f]{64}$/.test(h)))
+        throw Error("corrupt snapshot media retention metadata");
+      for(const h of hashes) protectedHashes.add(h);
+    }
+    return protectedHashes;
   }
 
   gcActive() {
@@ -98,14 +120,10 @@ export class ProfileStore {
 
   async sweep(deleted=false,now=Date.now()) {
     const prefix=this.prefix();
-    const all=this.sql.exec("SELECT revision,r2_key,committed_at FROM profile_history ORDER BY revision").toArray();
-    const current=deleted?null:this.revision().key;
-    const cutoff=now-SNAPSHOT_GRACE_MS;
-    // An older snapshot that was live at the beginning of the PITR window
-    // must survive, even if it was committed months before that window.
-    const anchor=[...all].reverse().find(x=>x.committed_at<cutoff);
-    const retained=deleted?new Set():new Set(all.filter(x=>x.committed_at>=cutoff || x.r2_key===anchor?.r2_key || x.r2_key===current).map(x=>x.r2_key));
-    if(current) retained.add(current);
+    const {all,retained:keep}=deleted
+      ? {all:this.sql.exec("SELECT revision,r2_key,committed_at FROM profile_history ORDER BY revision").toArray(),retained:[]}
+      : this.retainedVersions(now);
+    const retained=new Set(keep.map(x=>x.r2_key));
     this.ctx.storage.transactionSync(()=>{
       for(const x of all) if(!retained.has(x.r2_key))
         this.sql.exec("DELETE FROM profile_history WHERE revision=?",x.revision);
