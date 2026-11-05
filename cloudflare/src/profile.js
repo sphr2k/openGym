@@ -1,6 +1,6 @@
 import { stampPut } from "../../api/sync-stamps.js";
 import { ProfileStore } from "./profile-store.js";
-import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, garbageCollect, scheduleGarbageCollection, profileDeleted } from "./media.js";
+import { initMedia, noteReferences, mediaRequest, deleteAllProfileData, purgeDeletedMedia, garbageCollect, scheduleGarbageCollection, profileDeleted } from "./media.js";
 import { forClient, json, jsonBody, randomHex, validateProfile } from "./protocol.js";
 
 const WID_KEEP = 50;
@@ -148,8 +148,11 @@ export class ProfileDO {
     await scheduleGarbageCollection(this);
     let failure;
     try {
-      const grace=Math.max(0,Number(this.env.MEDIA_GC_GRACE_DAYS??14))*86400000;
-      await garbageCollect(this,grace);
+      if(profileDeleted(this)) await purgeDeletedMedia(this);
+      else {
+        const grace=Math.max(0,Number(this.env.MEDIA_GC_GRACE_DAYS??14))*86400000;
+        await garbageCollect(this,grace);
+      }
     }catch(err) {failure=err;console.error("media GC failed",err);}
     try {
       if(this.store.gcActive()) await this.store.sweep(profileDeleted(this));

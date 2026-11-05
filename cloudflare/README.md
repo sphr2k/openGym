@@ -27,12 +27,7 @@ AI coach, integration APIs, verified migration/backup tooling and full native ap
 are not complete. Missing optional routes return HTTP 404. This is a restricted
 staging deployment, not a public user-facing release.
 
-**Deployment verified:** opengym-cloudflare-staging.janwer.workers.dev with its
-own R2 bucket, SQLite Durable Objects and 13,283 static assets. Cloudflare
-Access is required for both the UI and API (owner browser login plus an
-explicit iOS Service Auth policy). The native app uses its existing
-Cloudflare Access Client ID/Secret support. Real native-device acceptance
-is still pending.
+**Staging evidence:** A restricted private Cloudflare staging deployment has been exercised with its own R2 bucket, SQLite Durable Objects and the original frontend assets. Real native-device acceptance remains pending. Resource names, private hostnames and identity policies are intentionally omitted from reusable public deployment instructions.
 
 
 ## Profile storage: immutable R2 snapshots
@@ -40,8 +35,10 @@ is still pending.
 Each user owns one SQLite-backed \`ProfileDO\`. The **entire original JSON profile**
 is stored as a single immutable object in the existing private R2 bucket under
 \`users/<user-id>/snapshots/\`. SQLite holds only the current revision, write ID,
-snapshot key, SHA-256 checksum, a short revision history and the existing media
-metadata. No JSON schema mapping, Drizzle or application-specific DB migrations
+snapshot key, SHA-256 checksum, a short revision history with the referenced
+media hashes of each retained snapshot, and the existing media metadata.
+Media reference extraction is shared with the original Node/Docker backend
+(`api/media-references.js`). No JSON schema mapping, Drizzle or application-specific DB migrations
 are required for new upstream fields.
 
 Writes load the snapshot, run the original \`stampPut\`, upload a *new* R2
@@ -61,19 +58,28 @@ lifecycle rule on the snapshot prefix. Intentional account deletion revokes
 access, purges R2 snapshots and retains temporary sweep wakeups for delayed
 uploads. Point-in-time recovery covers the DO SQLite pointer only, not R2
 objects; this retention policy is necessary for recoverability, not a backup
-substitute.
+substitute. Media GC uses the same retained-version set as snapshot GC, so
+manual sweeps cannot delete content needed by a historical snapshot.
+Expired media upload reservations and interrupted deletions are reconciled
+idempotently; the single per-DO alarm is also retained through account deletion
+to catch late R2 uploads.
 
 The client continues to send whole profiles and is **still subject to the
-existing 5 MiB HTTP request limit**. Only the SQLite per-row 2 MiB limit is
-removed.
+shared 5 MiB HTTP request limit**, enforced on actual UTF-8 bytes during
+stream ingestion on both Node/Docker and Cloudflare. Only the SQLite per-row
+2 MiB limit is removed. Media upload bodies are bounded independently by
+the original per-type caps. Cloudflare uses a single reusable payload buffer
+and reserves a per-DO 48 MiB concurrency budget *before* buffering; large
+simultaneous uploads can receive the original HTTP 429 retry response. The
+original Node/Docker backend retains its own streaming/file-backed upload
+adapter and does not need Cloudflare's memory-budget mechanism.
 
-**Clean-slate layout:** No legacy document reader, migration or dual-write is
-shipped. The short-lived fail-closed check for the old \`document\` table is
-only a cutover safety guard ([remove in #17](https://github.com/sphr2k/openGym/issues/17)).
-The owner's existing Cloudflare staging data requires an **external one-shot
-migration and verified independent backup** before this Worker may be deployed
-([migration #6](https://github.com/sphr2k/openGym/issues/6)).
-Do not deploy directly over the current legacy staging SQLite database.
+**Clean-slate layout:** No legacy document reader, migration, dual-write or
+cutover compatibility guard is shipped. Existing installations using the
+previous `document` table require a separate, operator-controlled, verified
+one-shot conversion into R2 snapshots and SQLite pointers **before** this
+Worker is deployed ([#6](https://github.com/sphr2k/openGym/issues/6)).
+Code rollback does not automatically restore a previous storage format.
 
 ## Local development
 
@@ -92,47 +98,100 @@ npm run test:integration --prefix cloudflare
 
 Wrangler creates local SQLite Durable Objects and an R2 binding. The test intentionally creates its own temporary account using a synthetic WebAuthn authenticator.
 
-## Cloudflare Access staging (actual deployment)
+## Deploy and maintain your own Cloudflare instance
 
-Staging uses a separate Wrangler config and never shares production storage.
-The verified deployed hostname is opengym-cloudflare-staging.janwer.workers.dev.
-Access application: openGym Staging, type self-hosted, bound to that exact
-workers.dev hostname; the owner browser policy permits only mail@janwerner.de.
-A separate Service Auth policy allows only service token openGym iOS Staging.
-Other Cloudflare Access service tokens cannot access this application.
+This is an experimental alternative backend for the **existing** openGym
+web/iOS/Android application, not a separate product. It requires a Cloudflare
+account with Workers, SQLite-backed Durable Objects and private R2 enabled.
 
-The iOS app's existing CF-Access-Client-Id and CF-Access-Client-Secret headers
-are supported in frontend/src/lib/cf-access.js and api.js. Access passes native
-preflight OPTIONS requests to the Worker (options_preflight_bypass=true).
-The Worker returns the allowed methods and headers only for Capacitor/WebView
-origins. The first POST /api/pair/redeem intentionally permits the Capacitor
-origin without an openGym Bearer token: it is authenticated by the short-lived,
-single-use pairing code. All later data requests require the paired Bearer.
+**Current supported path:** deploy from the full source checkout. There is
+**no GitHub Actions or custom CI requirement**, and no end-user database
+migration commands for a *new* installation. Setup still requires a terminal
+and Cloudflare authorization; do not advertise it as a completed one-click
+deployment for nontechnical users.
 
-Staging config sets assets.run_worker_first=true. Without it, Cloudflare
-may serve public UI assets without invoking Worker code. The original
-STAGING_LOCKED header mechanism remains available for other isolated
-deployment targets but is disabled here because it is not supported by the
-unmodified browser and native clients.
+1. Use a dedicated Cloudflare account or isolated application resources.
+   Review the resource names in \`cloudflare/wrangler.jsonc\`. The app needs
+   two SQLite Durable Object classes and an R2 bucket for media and immutable
+   full-profile snapshots.
+2. Build the **original** frontend from the repository root:
 
-**User setup:**
-1. Open the staging hostname in a browser and authenticate with Cloudflare Access.
-2. In openGym register/sign in with a passkey and use Settings -> Pair the mobile app.
-3. In Cloudflare Zero Trust -> Access controls -> Service credentials ->
-   Service Tokens, find openGym iOS Staging and rotate its Client Secret.
-   The secret is only shown once; never commit it or paste it in a shared issue.
-4. In the native iOS app's Connect to server screen, enter the staging hostname,
-   the Cloudflare Access Client ID/Secret, and the single-use pairing code.
+   ~~~sh
+   npm ci --prefix frontend
+   npm run build --prefix frontend
+   node scripts/catalogue/stage-media.mjs frontend/dist
+   npm ci --prefix cloudflare
+   ~~~
 
-The staging Access token uses a 90-day expiry. Each token rotation revokes the
-previous client secret. Full authorized remote and App Store iOS sync must be
-tested before production use.
+3. Create the R2 bucket named in your *own* Wrangler config, once, through
+   the Cloudflare Dashboard or Wrangler. Keep the bucket private; do not
+   expose it as a public development or website bucket.
+4. Check the Worker bundle, then deploy from \`cloudflare/\` using that
+   folder's Wrangler config:
 
-## Cloudflare build / target configuration
+   ~~~sh
+   npm run check --prefix cloudflare
+   cd cloudflare
+   npx wrangler deploy
+   ~~~
 
-The Worker lives under cloudflare/, with wrangler.jsonc and a relative static assets directory. It uses two SQLite Durable Object classes: AccountDO (singleton account+session authority), and ProfileDO (one per profile); the MEDIA binding targets a private R2 bucket. Worker static assets are built from the original Vite app. The public deployment is not recommended until the API compatibility checklist is complete.
+5. Open the deployed HTTPS hostname. Register/sign in using the app's
+   existing passkey flow; pair an unmodified native app using the existing
+   one-time pairing flow. Keep the hostname stable. When routing through a
+   custom domain, configure \`APP_ORIGIN\` and \`RP_ID\` consistently **before**
+   the first passkey registration, because passkeys are bound to origin/RP ID.
 
-A custom public domain must use a consistent WebAuthn RP ID/origin. APP_ORIGIN and RP_ID are optional configuration bindings, but **must be pinned for deployments whose request Host varies**. Account users and media do not use externally visible DO identifiers.
+### Optional Cloudflare Access protection
+
+For an **existing private** application, Cloudflare Access can add an
+independent outer access boundary, but it is not an application feature.
+If enabled, protect **all Worker/static-asset routes**, not only \`/api/*\`.
+Browser users may authenticate through an Access identity policy. Native
+app connections require an explicitly scoped Service Auth policy and
+separately generated client ID/secret supplied through the original native
+connection screen. Never commit or publish tokens, identity allowlists or
+private origins. A one-time pairing code does not replace the Access policy.
+
+For an ordinary installation without Cloudflare Access, openGym still
+enforces its own passkey/session/bearer authentication. Configure your
+registration/invite policy deliberately rather than assuming all endpoints
+are automatically private.
+
+### Updates and recovery
+
+Application code updates do not require a CI pipeline or manual SQL for
+the current fixed schema. **Back up your data before a storage architecture
+change.** The original frontend already supports portable JSON and ZIP
+(with photos/videos) export/import via Settings → Data & backup, across both
+backends; an export with reported missing media is not a complete backup.
+
+SQLite PITR alone is **not** a portable backup for R2 snapshots and media.
+R2 snapshot GC must retain the current snapshot, the recovery-window history,
+its pre-window anchor, and the media referenced by those snapshots. Do not
+install an R2 age-based lifecycle rule on the private snapshot/media prefix.
+
+The owner's former staging \`document\` storage needs a **separate one-shot
+data migration** before upgrading; the product runtime deliberately has no
+legacy migration path. See [#6](https://github.com/sphr2k/openGym/issues/6)
+and remove the temporary cutover guard via
+[#17](https://github.com/sphr2k/openGym/issues/17).
+
+### Why there is no one-click button yet
+
+Cloudflare's [Deploy to Cloudflare button](https://developers.cloudflare.com/workers/platform/deploy-buttons/)
+can provision resources and connect Workers Builds, but **subdirectory
+deployments require all application dependencies to live within that
+subdirectory**. Our Worker imports shared modules from \`api/\` and serves
+assets built in \`frontend/\`. A button pointing only at \`cloudflare/\`
+would therefore fail to assemble this monorepo correctly.
+
+A maintainer-ready one-click option needs a verified packaging/build
+strategy that preserves the **shared Node/Docker domain code**, not a
+Cloudflare-only copy. Track in
+[#11](https://github.com/sphr2k/openGym/issues/11); do not advertise a
+button until tested from a fresh account. Cloudflare's hosted Workers Builds
+is an optional managed deploy mechanism, not a requirement to configure
+GitHub Actions yourself.
 
 ## Compatibility and testing
 
@@ -142,4 +201,4 @@ A custom public domain must use a consistent WebAuthn RP ID/origin. APP_ORIGIN a
 - The current integration fixture validates real WebAuthn registration and proof, iPhone pairing, two profile writes, stale write rejection and reload under wrangler dev.
 - **Still required before production**: real iOS end-to-end acceptance, migration/backup, optional/admin/watch/recovery routes and full security review.
 
-Use the OpenSpec at ../openspec/changes/cloudflare-sqlite-do-runtime/ for the remaining acceptance checklist. Do not silently switch the client to a different sync protocol.
+The source-repository [Issues](https://github.com/sphr2k/openGym/issues) and relevant PRs are the authoritative acceptance backlog. Do not create parallel specifications or silently switch the client to a different sync protocol.
