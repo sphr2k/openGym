@@ -20,7 +20,7 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - Full local Wrangler/WebAuthn/paired-client integration test including R2 and account deletion
 - R2 orphan reconciliation: recover objects that landed before an interrupted SQLite commit;
   preserve referenced blobs and apply the existing grace period to unreferenced blobs; an alarm is persisted before R2 writes so interrupted uploads are revisited
-- Guarded Cloudflare staging Worker deployed with separate R2 bucket and DO SQLite (legacy format; not yet upgraded to R2 profile snapshots)
+- Guarded Cloudflare staging Worker with independent R2 bucket and SQLite Durable Objects
 
 **Not production-ready:** Admin-issued recovery, admin dashboard, watch relay, push,
 AI coach, integration APIs, verified migration/backup tooling and full native app parity
@@ -81,6 +81,21 @@ one-shot conversion into R2 snapshots and SQLite pointers **before** this
 Worker is deployed ([#6](https://github.com/sphr2k/openGym/issues/6)).
 Code rollback does not automatically restore a previous storage format.
 
+## Cloudflare CLI modes
+
+Project configuration lives in cloudflare/cloudflare.config.ts. Use the new
+Cloudflare CLI (cf) for builds, development, and deployments. The generated
+wrangler.config.ts is only the internal bundler adapter.
+
+The default mode targets Worker opengym-cloudflare and R2 bucket
+opengym-media. Explicit --mode staging targets the guarded Worker
+opengym-cloudflare-staging and its separate staging R2 bucket. Each mode
+uses its own SQLite-backed AccountDO and ProfileDO namespaces. Staging sends
+ALL asset requests through the Worker, preserving its Access boundary.
+
+Use cf deploy --mode staging for the staging target, never the default
+deploy command. The cf dev server normally listens on port 8787.
+
 ## Local development
 
 From the repository root:
@@ -91,7 +106,7 @@ npm run build --prefix frontend
 node scripts/catalogue/stage-media.mjs frontend/dist
 npm ci --prefix cloudflare
 npm run check --prefix cloudflare
-npm run dev --prefix cloudflare -- --port 8791
+npm run dev --prefix cloudflare
 # another terminal:
 npm run test:integration --prefix cloudflare
 ~~~
@@ -111,7 +126,7 @@ and Cloudflare authorization; do not advertise it as a completed one-click
 deployment for nontechnical users.
 
 1. Use a dedicated Cloudflare account or isolated application resources.
-   Review the resource names in \`cloudflare/wrangler.jsonc\`. The app needs
+   Review the resource names in \`cloudflare/cloudflare.config.ts\`. The app needs
    two SQLite Durable Object classes and an R2 bucket for media and immutable
    full-profile snapshots.
 2. Build the **original** frontend from the repository root:
@@ -132,7 +147,7 @@ deployment for nontechnical users.
    ~~~sh
    npm run check --prefix cloudflare
    cd cloudflare
-   npx wrangler deploy
+   cf deploy
    ~~~
 
 5. Open the deployed HTTPS hostname. Register/sign in using the app's
@@ -170,7 +185,7 @@ R2 snapshot GC must retain the current snapshot, the recovery-window history,
 its pre-window anchor, and the media referenced by those snapshots. Do not
 install an R2 age-based lifecycle rule on the private snapshot/media prefix.
 
-The owner's former staging \`document\` storage needs a **separate one-shot
+An existing installation's \`document\` storage needs a **separate one-shot
 data migration** before upgrading; the product runtime deliberately has no
 legacy migration path. See [#6](https://github.com/sphr2k/openGym/issues/6)
 and remove the temporary cutover guard via
@@ -198,7 +213,7 @@ GitHub Actions yourself.
 - The existing client sends a whole JSON profile with baseRev, baseWid and stamps. The ProfileDO handles the CAS in one SQLite transaction, calling the original api/sync-stamps.js and returning HTTP 409 with the current profile.
 - Pairing requires a fresh WebAuthn assertion, not just a browser session. The one-use verification and code state live in AccountDO SQLite, not Worker memory.
 - The official phone holds the bearer token and polls /api/data/rev; it needs no new API library or mobile build.
-- The current integration fixture validates real WebAuthn registration and proof, iPhone pairing, two profile writes, stale write rejection and reload under wrangler dev.
-- **Still required before production**: real iOS end-to-end acceptance, migration/backup, optional/admin/watch/recovery routes and full security review.
+- The current integration fixture validates real WebAuthn registration and proof, iPhone pairing, two profile writes, stale write rejection and reload under cf dev.
+- **Still required before production**: real iOS end-to-end acceptance, independently verified backup/restore, optional/admin/watch/recovery routes and full security review.
 
 The source-repository [Issues](https://github.com/sphr2k/openGym/issues) and relevant PRs are the authoritative acceptance backlog. Do not create parallel specifications or silently switch the client to a different sync protocol.

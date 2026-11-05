@@ -54,3 +54,6 @@ cloudflare/dist/
 cloudflare/.wrangler/
 
 cloudflare/dist-staging/
+
+# Generated Cloudflare CLI build output and account cache
+.cloudflare/
