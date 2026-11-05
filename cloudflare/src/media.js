@@ -1,5 +1,6 @@
 import { json, randomHex, jsonBody } from "./protocol.js";
 import { HASH_RE,TYPES,limits,sniffMedia,videoInfo,messages,quotaBytes,maxBytes } from "./media-validation.js";
+import { readBoundedBytes } from "./bounded-bytes.js";
 
 import { referencedHashes } from "../../api/media-references.js";
 export { referencedHashes };
@@ -62,22 +63,20 @@ function reserve(p,h,mime,size){
     return {token};
   });
 }
-async function readBounded(req,max){
-  if(Number(req.headers.get("content-length")||0)>max)return null;
-  const reader=req.body?.getReader();if(!reader)return new Uint8Array();
-  const chunks=[];let bytes=0;
-  for(;;){const {value,done}=await reader.read();if(done)break;
-    bytes+=value.length;if(bytes>max){await reader.cancel().catch(()=>{});return null;}chunks.push(value);
-  }
-  const data=new Uint8Array(bytes);let offset=0;
-  for(const c of chunks){data.set(c,offset);offset+=c.length;}
-  return data;
-}
 async function upload(p,req,h){
   const l=limits(p.env),mime=req.headers.get("content-type")?.split(";")[0]?.trim()?.toLowerCase();
   const decl=TYPES[mime];if(!decl)return err(415,"media-type");
   const ceiling=maxBytes(l,decl.kind);
-  const bytes=await readBounded(req,ceiling);
+  // A Durable Object can overlap asynchronous requests. Reserve a bounded
+  // upload-memory budget *before* buffering so two concurrent large videos
+  // cannot each consume most of a 128 MiB Worker isolate.
+  // Small uploads retain the original two-inflight SQL reservation semantics.
+  const budget=Math.max(48*1024*1024,ceiling);
+  const active=p.mediaUploadBytes??0;
+  if(active+ceiling>budget)return err(429,"busy",{retryAfter:5});
+  p.mediaUploadBytes=active+ceiling;
+  try {
+  const bytes=await readBoundedBytes(req,ceiling);
   if(!bytes)return err(413,"media-too-large",{maxMB:ceiling/1048576});
   if(!bytes.length)return err(415,"media-type");
   const sniff=sniffMedia(bytes);
@@ -131,6 +130,9 @@ async function upload(p,req,h){
   }catch(e){
     p.sql.exec("DELETE FROM media_files WHERE hash=? AND status='reserved' AND token=?",h,reservation.token);
     throw e;
+  }
+  } finally {
+    p.mediaUploadBytes-=ceiling;
   }
 }
 async function download(p,h){

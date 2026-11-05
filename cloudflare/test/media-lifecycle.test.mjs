@@ -314,3 +314,23 @@ test("delayed R2 media object created after account deletion is removed by the n
   assert.equal(f.blobs.has(key),false);
   assert.equal((await f.profile.fetch(new Request("https://gym.example/api/data"))).status,410);
 });
+
+test("large concurrent uploads reserve memory before reading second request",async()=>{
+  const f=fixture("memory-budget",{env:{MEDIA_IMAGE_MAX_MB:"30"}});
+  const a=Buffer.alloc(25*1024*1024,0x61),b=Buffer.alloc(25*1024*1024,0x62);
+  a.set([0xff,0xd8,0xff,0xe0],0);
+  b.set([0xff,0xd8,0xff,0xe0],0);
+  let release,started;
+  const hold=new Promise(r=>{release=r;});
+  const reached=new Promise(r=>{started=r;});
+  const put=f.env.MEDIA.put.bind(f.env.MEDIA);
+  f.env.MEDIA.put=async(...args)=>{started();await hold;return put(...args);};
+  const first=f.profile.fetch(raw("PUT","/api/media/"+sha(a),a));
+  await reached;
+  assert.ok(f.profile.mediaUploadBytes>=30*1024*1024);
+  const second=await parse(await f.profile.fetch(raw("PUT","/api/media/"+sha(b),b)));
+  assert.equal(second.status,429,"reject second large upload before allocating a second full payload");
+  release();
+  assert.equal((await first).status,201);
+  assert.equal(f.profile.mediaUploadBytes,0);
+});
