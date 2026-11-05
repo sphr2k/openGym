@@ -1,4 +1,5 @@
 import { MAX_JSON_BODY_BYTES } from './body-limits.js';
+import { validNudgeDate, nudgeCheckStatus } from './nudge-check-status.js';
 /* opengym-api — passkey (WebAuthn) auth + per-user state storage for openGym
    No framework, JSON-file storage, signed session cookies.               */
 import http from 'node:http';
@@ -2516,15 +2517,11 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const date = new URL(req.url, 'http://x').searchParams.get('date') || '';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z'))) {
+    if (!validNudgeDate(date)) {
       return json(res, 400, { error: 'date must be YYYY-MM-DD', code: 'date-invalid' });
     }
     const doc = readStateCached(user.id) || {};
-    const workouts = Array.isArray(doc.workouts) ? doc.workouts : [];
-    const done = workouts.some(w => w && w.d === date) || excusedOn(doc, date);
-    let nudge = false;
-    try { nudge = !done && !!nudgeFor(doc, date); } catch { nudge = true; }   // unreadable: keep what the phone planned
-    json(res, 200, { date, done, nudge, rev: doc._rev || 0 });
+    json(res, 200, nudgeCheckStatus(doc, date, doc._rev || 0));
   },
 
   'PUT /api/data': async (req, res) => {
