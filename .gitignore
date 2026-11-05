@@ -48,3 +48,9 @@ assets/tee/
 assets/bmc-cover*
 # scripts/pdf/render-samples.mjs output (npm run pdf:check)
 frontend/pdf-samples/
+
+# Generated Cloudflare Worker bundles and local DO state
+cloudflare/dist/
+cloudflare/.wrangler/
+
+cloudflare/dist-staging/
