@@ -1,6 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
+import cfConfig from "../cloudflare.config.ts";
 import worker from "../src/index.js";
 
 test("staging fails closed when the secret binding is missing",async()=>{
@@ -25,19 +25,28 @@ test("staging rejects incorrect credentials and serves API after correct key",as
   assert.equal((await good.json()).allow_guest,true);
 });
 
-test("Access staging sends ALL static assets to Worker and does not require legacy header",()=>{
-  const fs=requireJsonc();
-  assert.equal(fs.assets.run_worker_first,true,
-    "Cloudflare otherwise serves assets before fetch() and bypasses Access-aware routing");
-  assert.equal(fs.vars.STAGING_LOCKED,undefined,"legacy header gate must not block browsers and iOS");
-  assert.notEqual(fs.name,"opengym-cloudflare");
-  assert.notEqual(fs.r2_buckets[0].bucket_name,"opengym-media");
+test("cf staging guards all assets, keeps account and profile DO namespaces, and never changes default target",()=>{
+  const stage=cfConfig({mode:"staging",isPreview:false}).worker;
+  const regular=cfConfig({mode:undefined,isPreview:false}).worker;
+  assert.equal(stage.assets.runWorkerFirst,true,
+    "all static assets must invoke the Access-aware Worker");
+  assert.equal(stage.env.STAGING_LOCKED,undefined,
+    "legacy header gate must not block browsers and iOS");
+  assert.equal(stage.name,"opengym-cloudflare-staging");
+  assert.equal(regular.name,"opengym-cloudflare");
+  assert.deepEqual(regular.assets.runWorkerFirst,["/api/*"]);
+  assert.deepEqual(stage.env.MEDIA,{type:"r2",name:"opengym-cloudflare-staging-media"});
+  assert.deepEqual(regular.env.MEDIA,{type:"r2",name:"opengym-media"});
+  for(const key of ["ACCOUNTS","PROFILES"]){
+    assert.equal(stage.env[key].type,"durable-object");
+    assert.equal(stage.env[key].worker,stage.name);
+    assert.equal(regular.env[key].worker,regular.name);
+  }
+  assert.equal(stage.env.ACCOUNTS.exportName,"AccountDO");
+  assert.equal(stage.env.PROFILES.exportName,"ProfileDO");
+  assert.deepEqual(stage.exports.AccountDO,{type:"durable-object",storage:"sqlite"});
+  assert.deepEqual(stage.exports.ProfileDO,{type:"durable-object",storage:"sqlite"});
 });
-
-function requireJsonc(){
-  // The checked-in .jsonc contains only JSON-compatible syntax.
-  return JSON.parse(readFileSync(new URL("../wrangler.staging.jsonc",import.meta.url),"utf8"));
-}
 
 test("the official Capacitor app can redeem a pairing code before it owns an openGym Bearer",async()=>{
   const account={fetch:async request=>{

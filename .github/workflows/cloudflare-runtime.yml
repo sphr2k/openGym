@@ -5,12 +5,12 @@ on:
     paths:
       - 'cloudflare/**'
       - 'openspec/**'
-      - 'api/sync-stamps.js'
+      - 'api/**'
       - '.github/workflows/cloudflare-runtime.yml'
   pull_request:
     paths:
       - 'cloudflare/**'
-      - 'api/sync-stamps.js'
+      - 'api/**'
       - '.github/workflows/cloudflare-runtime.yml'
 
 jobs:
@@ -33,17 +33,17 @@ jobs:
       - run: node scripts/catalogue/stage-media.mjs frontend/dist
       - run: npm run check --prefix cloudflare
       - run: npm run build:staging --prefix cloudflare
-      - name: Run Wrangler DO compatibility tests
+      - name: Run cf dev DO compatibility tests
         shell: bash
         run: |
-          npm run dev --prefix cloudflare -- --port 8791 --ip 127.0.0.1 > "$RUNNER_TEMP/worker.log" 2>&1 &
+          npm run dev --prefix cloudflare > "$RUNNER_TEMP/worker.log" 2>&1 &
           worker_pid=$!
           trap 'kill "$worker_pid" || true' EXIT
           for _ in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:8791/api/health > /dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:8787/api/health > /dev/null; then break; fi
             sleep 2
           done
-          npm run test:integration --prefix cloudflare || {
+          OPENGYM_TEST_URL=http://127.0.0.1:8787 npm run test:integration --prefix cloudflare || {
             tail -100 "$RUNNER_TEMP/worker.log"
             exit 1
           }

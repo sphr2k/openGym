@@ -3,19 +3,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "build": "wrangler deploy --dry-run --outdir dist",
+    "dev": "cf dev",
+    "build": "cf build",
     "test": "node --test test/*.test.mjs",
     "check": "npm run build && npm run test",
     "test:integration": "node test/local-worker.mjs",
-    "build:staging": "wrangler deploy --config wrangler.staging.jsonc --dry-run --outdir dist-staging",
-    "deploy:staging": "wrangler deploy --config wrangler.staging.jsonc"
+    "build:staging": "cf build --mode staging",
+    "deploy:staging": "cf deploy --mode staging"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.3"
   },
   "devDependencies": {
     "cbor-x": "^1.6.9",
+    "cf": "1.0.0-beta.26",
     "wrangler": "^4.100.0"
   }
 }
