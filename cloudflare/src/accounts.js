@@ -232,6 +232,16 @@ export class AccountDO {
       const s = await this.authenticate(req);
       return s ? json({ id: s.user.id, user: ownerPublic(s.user), bearer: s.bearer, kind: s.kind, exp: s.exp }) : json({ error: "not signed in" }, 401);
     }
+    // Internal-only identity lookup for the read-only MCP gateway. The public Worker
+    // blocks /_internal/*, and the MCP route separately requires a long random secret.
+    // A single active owner profile is the only supported personal deployment.
+    if (route === "GET /_internal/mcp-owner") {
+      const users = this.queryOne("SELECT COUNT(*) AS n FROM users WHERE disabled=0");
+      const owners = this.sql.exec("SELECT id FROM users WHERE owner=1 AND disabled=0").toArray();
+      if (users?.n !== 1 || owners.length !== 1)
+        return json({error:"MCP requires a single active owner profile"},503);
+      return json({id:owners[0].id});
+    }
     if (route === "GET /_internal/health") {
       const row = this.queryOne("SELECT COUNT(*) AS n FROM users");
       const last = Number(this.queryOne("SELECT value FROM meta WHERE key='last_health'")?.value || 0);

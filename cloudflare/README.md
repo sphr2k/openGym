@@ -105,6 +105,7 @@ npm ci --prefix frontend
 npm run build --prefix frontend
 node scripts/catalogue/stage-media.mjs frontend/dist
 npm ci --prefix cloudflare
+npm ci --prefix mcp    # Cloudflare MCP imports the shared training logic
 npm run check --prefix cloudflare
 npm run dev --prefix cloudflare
 # another terminal:
@@ -136,6 +137,7 @@ deployment for nontechnical users.
    npm run build --prefix frontend
    node scripts/catalogue/stage-media.mjs frontend/dist
    npm ci --prefix cloudflare
+   npm ci --prefix mcp
    ~~~
 
 3. Create the R2 bucket named in your *own* Wrangler config, once, through
@@ -217,3 +219,38 @@ GitHub Actions yourself.
 - **Still required before production**: real iOS end-to-end acceptance, independently verified backup/restore, optional/admin/watch/recovery routes and full security review.
 
 The source-repository [Issues](https://github.com/sphr2k/openGym/issues) and relevant PRs are the authoritative acceptance backlog. Do not create parallel specifications or silently switch the client to a different sync protocol.
+
+## Optional read-only MCP Worker (single-owner deployments)
+
+The optional Cloudflare MCP endpoint is a **separate Worker**, `opengym-mcp`,
+with no web assets, R2 access, or browser login. Its `ACCOUNTS` and `PROFILES`
+bindings target the *existing* `opengym-cloudflare-staging` Durable Object
+namespaces. The application remains behind its independent Cloudflare Access
+policy; do not create a public bypass on it for MCP traffic.
+
+The MCP Worker serves only `/mcp` (Streamable HTTP), and rejects callers unless
+`MCP_UPSTREAM_TOKEN` is a random secret of at least 32 characters. Place the
+same token in the Cloudflare MCP Portal's **bearer** upstream configuration.
+The Portal performs user OAuth via Cloudflare Access. Restrict its Access policy
+to the intended owner; an authenticated Portal caller can read that owner's
+workout history. `log_workout` is intentionally NOT exposed.
+
+This integration fails closed unless the OpenGym staging account database has
+**exactly one active account**, which must be the unique owner. No client token,
+passkey, or broad administrative credential is stored in the MCP Worker.
+
+~~~sh
+# From the repository root, after installing Node and cf:
+npm ci --prefix mcp
+npm ci --prefix cloudflare
+# Build/deploy the existing app after the internal owner lookup was added:
+cd cloudflare
+cf deploy --mode staging
+# Deploy the separate no-assets MCP Worker, with MCP_UPSTREAM_TOKEN provided
+# through a private JSON or .env file, not a CLI argument or checked-in YAML:
+cf deploy --mode mcp --secrets-file /private/path/mcp-secrets.json
+~~~
+
+The bearer must be kept synchronized with the Portal remote upstream, and the
+MCP Worker must be registered at `https://opengym-mcp.<subdomain>.workers.dev/mcp`.
+Avoid registering a URL pointing directly at the Access-protected web app.
