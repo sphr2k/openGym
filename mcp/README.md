@@ -162,6 +162,47 @@ None of these estimates is a validated physiological muscle or cardiovascular
 recovery score; intervening sets can load the same muscle groups and influence
 systemic fatigue.
 
+### Muscle overlap and intervening workload (existing `get_workout` tool)
+
+`get_workout` now also returns the **same canonical muscle assignments** used by
+OpenGym's muscle balance map (`frontend/src/lib/muscles.js`), not a second mapping
+built into the MCP. Every workout `entry` carries:
+
+- `muscle_weights`: effective-set coefficients for each canonical muscle;
+  `primary_muscles` (coefficient ≥0.75) and `secondary_muscles` (0–0.75),
+  and `muscle_source` (`catalogue`, `profile_custom`, `history_snapshot`,
+  `history_override`, `body_part_fallback`, or `unmapped`). These categories
+  describe the **app's load model**, not measured muscle activation.
+
+When all completed sets have timestamps, each `set_timeline` event (and its
+corresponding `entries[].sets[]` row) additionally provides:
+
+- `last_work_by_muscle`: the most recent completed set for **each muscle**
+  involved in this exercise, with the observed time elapsed and, when the
+  set-duration model applies, estimated time until the current set started.
+  `latest_overlapping_set`: the most recent set sharing any muscle group.
+- `intervening_overlapping_sets`, `intervening_overlapping_set_count`,
+  `intervening_muscle_set_counts`, and `intervening_muscle_load`: when a previous
+  set of the **same exercise** exists, show which intervening work sets share
+  muscles and sum OpenGym's effective-set coefficients for those shared muscles.
+- `muscle_overlap_unavailable`: documented reason when the chronology or
+  muscle metadata cannot support an estimate. `muscle_overlap_model` at workout
+  level reports data coverage and interpretation limits.
+
+Warm-up rows do not count as intervening *work* sets. Implausible check-off
+intervals are flagged and excluded from the muscle-time tracking, without
+changing the stored logs. For imported workouts without set timestamps,
+exercise muscle metadata remains available, but chronological overlap is not
+inferred. No stored workout data, profile metadata or automatic RIR defaults
+are altered. Actual RIR/RPE is read only when the user entered it.
+
+**This is not a physiological fatigue or recovery score.** For example, rowing
+and pulldowns share OpenGym's `upper-back` and `biceps` groups, whereas rowing
+and the leg press do not share a mapped muscle. The model cannot tell whether
+cardiovascular fatigue, systemic exertion, posture, technique or genuine local
+muscle recovery is the limiting factor. Treat these as interpretable training
+covariates for comparisons across sessions.
+
 ## Logging workouts
 
 `log_workout` lets you tell your LLM what you did instead of tapping it in:

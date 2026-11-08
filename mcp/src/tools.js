@@ -23,6 +23,7 @@ import { programmesOf, programmeStatus, programmeRoutineIds } from '../../fronte
 import { readingsOf, dailyModeOf } from '../../frontend/src/lib/weigh-ins.js'
 import { setVideosOf, setVideoCount } from '../../frontend/src/lib/set-videos.js'
 import { DEFAULT_SECONDS_PER_REP, estimatedRepDuration, estimateWorkoutRest } from './rest-estimation.js'
+import { workoutMuscleProfiles, addMuscleOverlap } from './muscle-overlap.js'
 
 /* ---------- helpers ---------- */
 
@@ -394,7 +395,7 @@ const gymOf = w => (w && w.gym && typeof w.gym === 'object' && String(w.gym.name
 /** get_workout — full entry/set breakdown for one date. */
 export const getWorkout = {
   name: 'get_workout',
-  description: 'Get workout sets, real check-off timestamps and the chronological set_timeline across all exercises. Estimated_set_duration_sec, estimated_idle_before_sec (passive time before this set), estimated_same_exercise_recovery_sec (time since prior same-exercise finish minus this set duration, INCLUDES intervening exercises), and estimated_passive_since_previous_same_exercise_sec (subtracts intervening work) are modelled using seconds_per_rep (default 3), with scenario ranges. Neither is actual measured rest or local muscle recovery. Intervals require all completed sets timestamped; timed/cardio and complex sets have no tempo estimate. Identify by workout_id or date; call list_workouts first.',
+  description: 'Get workout sets, real check-off timestamps, canonical per-exercise muscle_weights (OpenGym muscle model), and a chronological set_timeline showing last work affecting the same muscles and overlapping exercises between two same-exercise sets. Estimated intervals and muscle loads are model descriptors, NOT measured muscle recovery.  Estimated_set_duration_sec, estimated_idle_before_sec (passive time before this set), estimated_same_exercise_recovery_sec (time since prior same-exercise finish minus this set duration, INCLUDES intervening exercises), and estimated_passive_since_previous_same_exercise_sec (subtracts intervening work) are modelled using seconds_per_rep (default 3), with scenario ranges. Neither is actual measured rest or local muscle recovery. Intervals require all completed sets timestamped; timed/cardio and complex sets have no tempo estimate. Identify by workout_id or date; call list_workouts first.',
   schema: {
     date: isoDate().optional().describe('The workout date as YYYY-MM-DD. If two sessions share that date, the answer lists them instead and asks for a workout_id.'),
     workout_id: z.string().min(1).optional().describe('The id from list_workouts. Preferred: it names one session even on a day with two.'),
@@ -432,14 +433,19 @@ export const getWorkout = {
       const e = new Error('get_workout needs either workout_id or date'); e.code = 'EINVAL'; throw e
     }
     const tempo = seconds_per_rep ?? DEFAULT_SECONDS_PER_REP
-    const entries = (w.entries || []).map(e => entryView(e, S, tempo))
+    const profiles = workoutMuscleProfiles(w.entries || [], S)
+    const entries = (w.entries || []).map((e, i) => ({ ...entryView(e, S, tempo), ...profiles[i] }))
     const { timeline, model } = estimateWorkoutRest(workoutSetTimeline(w, S), w.entries || [], tempo)
+    const overlap = addMuscleOverlap(timeline, w.entries || [], profiles)
     // The same useful pause estimates are available on the individual sets,
     // not only in the workout-wide chronological timeline.
     const restFields = ['estimated_idle_before_sec', 'estimated_idle_before_range_sec',
       'estimated_same_exercise_recovery_sec', 'estimated_same_exercise_recovery_range_sec',
       'estimated_passive_since_previous_same_exercise_sec', 'estimated_passive_since_previous_same_exercise_range_sec',
-      'intervening_set_count', 'intervening_exercise_ids', 'rest_estimate_unavailable']
+      'intervening_set_count', 'intervening_exercise_ids', 'rest_estimate_unavailable',
+      'last_work_by_muscle', 'latest_overlapping_set',
+      'intervening_overlapping_sets', 'intervening_overlapping_set_count',
+      'intervening_muscle_load', 'intervening_muscle_set_counts', 'intervening_suspect_timestamp_set_count', 'muscle_overlap_unavailable']
     for (const event of timeline) {
       const set = entries[event.entry_index]?.sets?.[event.set_index]
       if (set) for (const key of restFields) if (Object.hasOwn(event, key)) set[key] = event[key]
@@ -465,6 +471,7 @@ export const getWorkout = {
       ...(validTimestampMs(w.end) != null ? { ended_at: new Date(w.end).toISOString(), ended_at_ms: w.end } : {}),
       set_timeline: timeline,
       rest_estimation_model: model,
+      muscle_overlap_model: overlap,
       timing_note: 'Completion timestamps are when sets were checked off, not precise end-of-effort measurements. Intervals between completions include the next set, transitions and any other exercises; they are not measured rest. Imported and older sets may have no timestamp.',
       // The number of sets filmed that day (form videos), nothing about the videos themselves.
       ...(setVideoCount(w) ? { form_videos: setVideoCount(w) } : {})
