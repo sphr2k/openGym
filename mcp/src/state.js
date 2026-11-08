@@ -3,6 +3,7 @@
    tool call without a restart. */
 import fs from 'node:fs'
 import path from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { applyExerciseMerges } from '../../frontend/src/lib/exercise-merge.js'
 
 const DATA_DIR = process.env.OPENGYM_DATA || path.join(process.cwd(), 'data')
@@ -15,7 +16,14 @@ let _db = undefined
 let _uid = null
 let _watcher = null
 let _loadedMtime = 0    // mtimeMs we last read at — used to catch watcher omissions
-let _seeded = false     // a test's in-memory state, never compared with the disk
+let _seeded = false
+
+// Per-request Cloudflare MCP state: never cache or share another caller's profile.
+const remote = new AsyncLocalStorage()
+export function withRemoteState(state, fn) {
+  return remote.run({ state: state == null ? null : shaped(state) }, fn)
+}
+     // a test's in-memory state, never compared with the disk
 
 // null means one thing only: the file is not there (an account that never synced from a device).
 // Every other failure — no permission on the mount, a truncated or corrupt file — is a real fault,
@@ -118,6 +126,8 @@ export function init() {
 
 // Returns the state object, or null for a fresh account that never signed in on a device.
 export function getState() {
+  const ctx = remote.getStore()
+  if (ctx) return ctx.state
   init()
   const file = stateFile(_uid)
   // Re-read if the file's mtime changed since our last load — covers watcher omissions and

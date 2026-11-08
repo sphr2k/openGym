@@ -3,6 +3,21 @@ import { bindings, defineConfig, exports } from "cf/config";
 // Keep the original default Worker independent from the guarded staging
 // target. Explicit --mode staging is required for the owner's cutover.
 export default defineConfig(({ mode }) => {
+  // Separate read-only MCP runtime: static bearer + direct cross-Worker Durable Object
+  // bindings. The app's own Access policy remains untouched; never bypass it for /mcp.
+  if (mode === "mcp") return {
+    worker: {
+      name: "opengym-mcp",
+      compatibilityDate: "2026-11-03",
+      compatibilityFlags: ["nodejs_compat"],
+      entrypoint: "./src/mcp-worker.js",
+      observability: {enabled: true},
+      env: {
+        ACCOUNTS: bindings.durableObject({worker: "opengym-cloudflare-staging", exportName: "AccountDO"}),
+        PROFILES: bindings.durableObject({worker: "opengym-cloudflare-staging", exportName: "ProfileDO"}),
+      },
+    },
+  };
   const staging = mode === "staging";
   const name = staging ? "opengym-cloudflare-staging" : "opengym-cloudflare";
   return {

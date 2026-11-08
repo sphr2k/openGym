@@ -65,6 +65,17 @@ For Cursor and other MCP-compatible clients, see the client's MCP docs — the s
 Restart the client; you should see the openGym tools appear with "serving profile \<name\>" on
 the server's stderr.
 
+## Cloudflare Worker deployment (read-only)
+
+The Cloudflare backend additionally offers a Streamable HTTP MCP Worker in
+`../cloudflare/src/mcp-worker.js`, with the same ten read-only tools implemented
+by this package. It accesses live Profile Durable Objects via cross-Worker
+bindings rather than reading the local `./data` directory. Requests are
+scoped to an AsyncLocalStorage context to prevent sharing state across users.
+The Portal enforces its own OAuth and this Worker requires a separate 32+ byte
+upstream bearer. The writing tool `log_workout` is deliberately not enabled.
+See `../cloudflare/README.md` for configuration and deployment.
+
 ## Tools
 
 Ten read-only tools, and one that writes:
