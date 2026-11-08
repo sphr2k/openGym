@@ -86,7 +86,7 @@ Ten read-only tools, and one that writes:
 | `preview_session` | What will the app actually put on screen when I start this routine — after the progression policy and my history have overridden the plan? |
 | `get_week_plan` | What's planned when: the next seven days with their routines and how each was decided (coach week, a pinned session, an override, the weekday plan), the current coach week when one is running, and the weekday table. |
 | `list_workouts` | Recent sessions — newest first, with dates, sets done/planned, volume, duration, PRs. |
-| `get_workout` | Full set-by-set breakdown of one session, by `workout_id` or by date. On a day with two sessions the date alone returns both ids to pick from rather than guessing at one. `form_videos` says how many sets were filmed; the videos themselves never leave the app. A set with a note of its own (set menu → Note) carries it as `sets[].note`. |
+| `get_workout` | Full set-by-set breakdown including recorded set-completion times, chronologically sorted `set_timeline` and intervals between completion ticks, by `workout_id` or by date. On a day with two sessions the date alone returns both ids to pick from rather than guessing at one. `form_videos` says how many sets were filmed; the videos themselves never leave the app. A set with a note of its own (set menu → Note) carries it as `sets[].note`. |
 | `get_bodyweight` | Weigh-ins, one value per day (the profile's "Daily weigh-in value": morning, average or last), each day's readings with their times, the latest weight, the goal line, and deltas vs goal. |
 | `estimate_1rm` | All-time best 1RM for an exercise + the trend, or a PR table across all exercises. |
 | `muscle_balance` | Which muscles I've trained this week/month/all-time, ranked + which I've neglected. |
@@ -107,6 +107,27 @@ it went into everywhere, also in a workout another device logged against it befo
 Each tool returns JSON the LLM can format as it likes; structured fields (sets, dates, levels)
 are pre-formatted into human-readable labels in `src/labels.js` so the LLM doesn't need to
 re-interpret them.
+
+## Set timestamps and rest-interval analysis
+
+Completed workouts retain `sets[].at` (Unix milliseconds), recorded when the
+athlete checks off a set. `get_workout` exposes this as `completed_at` (ISO UTC)
+and `completed_at_ms`, alongside existing load/reps, effort (when entered) and
+per-set notes. It also returns `set_timeline`, which sorts recorded completion
+checks across **all** exercises and rows instead of assuming plan order. Entries
+identify the exercise and the original set number/indices. `completion_order`
+is chronological. `seconds_since_previous_completion` and
+`seconds_since_previous_same_exercise_completion` are exact elapsed times
+between those checks, when both timestamps exist.
+
+**Do not call these measured rest durations.** The elapsed time includes the
+next set's execution time, setup, transitions, and any intervening exercises.
+The actual set-start time and hence exact rest are not recorded. Subtracting an
+assumed set execution time can give an explicitly model-dependent rest estimate,
+but the MCP does not present that estimate as an observation. Older or imported
+sets without `at` are preserved in `entries` and omitted from the chronological
+timeline; the MCP never fabricates timestamps. Set rows do not currently get
+UUIDv7 IDs by default; order comes from `at`, not from an assumed identifier.
 
 ## Logging workouts
 
