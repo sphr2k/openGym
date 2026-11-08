@@ -1,7 +1,6 @@
 import {test} from "node:test";
 import assert from "node:assert/strict";
 import cfConfig from "../cloudflare.config.ts";
-import wranglerConfig from "../wrangler.config.ts";
 import worker from "../src/index.js";
 
 test("staging fails closed when the secret binding is missing",async()=>{
@@ -49,15 +48,14 @@ test("cf staging guards all assets, keeps account and profile DO namespaces, and
   assert.deepEqual(stage.exports.ProfileDO,{type:"durable-object",storage:"sqlite"});
 });
 
-test("MCP runtime binds existing staging Durable Objects but no media or assets",()=>{
-  const mcp=cfConfig({mode:"mcp",isPreview:false}).worker;
-  assert.equal(mcp.name,"opengym-mcp");
-  assert.equal(mcp.entrypoint,"./src/mcp-worker.js");
-  assert.equal(mcp.assets,undefined);
-  assert.deepEqual(Object.keys(mcp.env).sort(),["ACCOUNTS","PROFILES"]);
-  for(const binding of ["ACCOUNTS","PROFILES"]) {
-    assert.equal(mcp.env[binding].worker,"opengym-cloudflare-staging");
-  }
+test("staging binds the MCP hostname to the existing application Worker",()=>{
+  const stage=cfConfig({mode:"staging",isPreview:false}).worker;
+  const regular=cfConfig({mode:undefined,isPreview:false}).worker;
+  assert.equal(stage.env.MCP_HOSTNAME.value, "opengym-mcp.janw.eu");
+  assert.equal(regular.env.MCP_HOSTNAME, undefined);
+  assert.equal(stage.entrypoint, "./src/index.js");
+  assert.equal(stage.exports.AccountDO.storage, "sqlite");
+  assert.equal(stage.exports.ProfileDO.storage, "sqlite");
 });
 
 test("the official Capacitor app can redeem a pairing code before it owns an openGym Bearer",async()=>{
@@ -88,9 +86,4 @@ test("cross-origin browser attempts to redeem a pairing code are denied",async()
   }),env,{});
   assert.equal(response.status,403);
   assert.equal((await response.json()).code,"origin-mismatch");
-});
-
-test("MCP mode never packages exercise media or web assets",()=>{
-  assert.deepEqual(wranglerConfig({mode:"mcp",isPreview:false}),{});
-  assert.equal(wranglerConfig({mode:"staging",isPreview:false}).assetsDirectory,"../frontend/dist");
 });

@@ -1,4 +1,5 @@
 import { AccountDO } from "./accounts.js";
+import { handleMcp } from "./mcp.js";
 import { ProfileDO } from "./profile.js";
 import { json, BODY_LIMIT } from "./protocol.js";
 import { validNudgeDate, nudgeCheckStatus } from "../../api/nudge-check-status.js";
@@ -63,6 +64,15 @@ export default {
         return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
       }
     }
+
+    // The same Worker serves the browser app and the MCP portal on distinct hosts.
+    // On the MCP host, never expose any app assets or user/password/passkey routes.
+    // On the app host, /mcp must not bypass its existing Cloudflare Access policy.
+    if (typeof env.MCP_HOSTNAME === "string" && url.hostname === env.MCP_HOSTNAME) {
+      if (path !== "/mcp") return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+      return handleMcp(request, env);
+    }
+    if (path === "/mcp" || path.startsWith("/mcp/")) return new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
 
     if (!path.startsWith("/api/")) return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
     if (path.startsWith("/api/_internal/") || path.startsWith("/_internal/")) return json({error:"not found"},404);

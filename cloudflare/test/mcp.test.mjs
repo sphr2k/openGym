@@ -1,17 +1,18 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
-import appWorker from '../src/index.js'
-import worker from '../src/mcp-worker.js'
+import worker from '../src/index.js'
 import {withRemoteState, getState} from '../../mcp/src/state.js'
 
-const url = 'https://staging.example/mcp'
-const active = {MCP_UPSTREAM_TOKEN:'a'.repeat(64)}
+const url = 'https://opengym-mcp.janw.eu/mcp'
+const active = {MCP_HOSTNAME:'opengym-mcp.janw.eu', MCP_UPSTREAM_TOKEN:'a'.repeat(64)}
 
-test('main app does not expose MCP; dedicated worker only serves /mcp', async () => {
-  const app = await appWorker.fetch(new Request(url), {}, {})
-  const offPath = await worker.fetch(new Request('https://mcp.example/'), {}, {})
+test('MCP host is isolated from the app, and app host refuses /mcp', async () => {
+  const app = await worker.fetch(new Request('https://staging.example/mcp'),active,{})
+  const missing = await worker.fetch(new Request('https://opengym-mcp.janw.eu/'),active,{})
+  const appApi = await worker.fetch(new Request('https://opengym-mcp.janw.eu/api/config'),active,{})
   assert.equal(app.status,404)
-  assert.equal(offPath.status,404)
+  assert.equal(missing.status,404)
+  assert.equal(appApi.status,404)
 })
 
 test('MCP unauthenticated requests cannot read an openGym profile', async () => {

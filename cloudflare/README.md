@@ -220,37 +220,39 @@ GitHub Actions yourself.
 
 The source-repository [Issues](https://github.com/sphr2k/openGym/issues) and relevant PRs are the authoritative acceptance backlog. Do not create parallel specifications or silently switch the client to a different sync protocol.
 
-## Optional read-only MCP Worker (single-owner deployments)
+## Unified read-only MCP endpoint (staging)
 
-The optional Cloudflare MCP endpoint is a **separate Worker**, `opengym-mcp`,
-with no web assets, R2 access, or browser login. Its `ACCOUNTS` and `PROFILES`
-bindings target the *existing* `opengym-cloudflare-staging` Durable Object
-namespaces. The application remains behind its independent Cloudflare Access
-policy; do not create a public bypass on it for MCP traffic.
+OpenGym staging and its read-only MCP share **one Worker deployment** and its
+existing AccountDO, ProfileDO and R2 storage. The two public hostnames are
+intentionally distinct:
 
-The MCP Worker serves only `/mcp` (Streamable HTTP), and rejects callers unless
-`MCP_UPSTREAM_TOKEN` is a random secret of at least 32 characters. Place the
-same token in the Cloudflare MCP Portal's **bearer** upstream configuration.
-The Portal performs user OAuth via Cloudflare Access. Restrict its Access policy
-to the intended owner; an authenticated Portal caller can read that owner's
-workout history. `log_workout` is intentionally NOT exposed.
+- `opengym-cloudflare-staging.janwer.workers.dev` remains protected by its
+  existing Cloudflare Access browser/iOS policy. `/mcp` returns 404 here.
+- `opengym-mcp.janw.eu` is a **Custom Domain on the same Worker**. All paths
+  except `/mcp` return 404, including `/`, `/api/*`, and browser registration.
+  `/mcp` requires the 32-byte random `MCP_UPSTREAM_TOKEN` secret. Cloudflare
+  MCP Portal checks user OAuth/Access before sending that bearer to the Worker.
 
-This integration fails closed unless the OpenGym staging account database has
-**exactly one active account**. The Portal Access policy must limit access to the intended owner. No client token,
-passkey, or broad administrative credential is stored in the MCP Worker.
+The MCP endpoint is read-only; it exposes the ten existing MCP read tools, but
+never `log_workout`. It fails closed if there is not exactly one active profile.
+The custom domain is attached as Cloudflare account configuration; avoid applying
+browser Access policies to this MCP hostname (the portal cannot complete those
+interactive Access challenges). Protect `/mcp` with its bearer instead.
 
-~~~sh
-# From the repository root, after installing Node and cf:
-npm ci --prefix mcp
-npm ci --prefix cloudflare
-# Build/deploy the existing app after the internal owner lookup was added:
-cd cloudflare
-cf deploy --mode staging
-# Deploy the separate no-assets MCP Worker, with MCP_UPSTREAM_TOKEN provided
-# through a private JSON or .env file, not a CLI argument or checked-in YAML:
-cf deploy --mode mcp --secrets-file /private/path/mcp-secrets.json
+For the initial migration, deploy the merged app once with
+`cd cloudflare && cf deploy --mode staging --secrets-file /private/mcp-secret.json`
+(using an `MCP_UPSTREAM_TOKEN` key), and attach the Custom Domain to the
+existing staging Worker. Rotate the Portal upstream's credential to match and
+synchronize MCP capabilities. Do not put the bearer in Git or a CLI argument.
+
+**Automatic Builds:** the `opengym-cloudflare-staging` Workers Builds project
+watches `main` on `sphr2k/openGym`, with repository root `/` and:
+
+~~~text
+Build:   bash scripts/cloudflare-staging-build.sh
+Deploy:  npm run deploy:staging --prefix cloudflare
 ~~~
 
-The bearer must be kept synchronized with the Portal remote upstream, and the
-MCP Worker must be registered at `https://opengym-mcp.<subdomain>.workers.dev/mcp`.
-Avoid registering a URL pointing directly at the Access-protected web app.
+Only this one Worker deploy runs; the default `opengym-cloudflare` target is
+unaffected. The staging app's web assets and exercise media are rebuilt from the
+same commit and the MCP endpoint goes live together with them.
