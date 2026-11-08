@@ -9,9 +9,7 @@
     "check": "npm run build && npm run test",
     "test:integration": "node test/local-worker.mjs",
     "build:staging": "cf build --mode staging",
-    "deploy:staging": "cf deploy --mode staging",
-    "build:mcp": "cf build --mode mcp",
-    "deploy:mcp": "cf deploy --mode mcp"
+    "deploy:staging": "cf deploy --mode staging"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.3",

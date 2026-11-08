@@ -67,14 +67,13 @@ the server's stderr.
 
 ## Cloudflare Worker deployment (read-only)
 
-The Cloudflare backend additionally offers a Streamable HTTP MCP Worker in
-`../cloudflare/src/mcp-worker.js`, with the same ten read-only tools implemented
-by this package. It accesses live Profile Durable Objects via cross-Worker
-bindings rather than reading the local `./data` directory. Requests are
-scoped to an AsyncLocalStorage context to prevent sharing state across users.
-The Portal enforces its own OAuth and this Worker requires a separate 32+ byte
-upstream bearer. The writing tool `log_workout` is deliberately not enabled.
-See `../cloudflare/README.md` for configuration and deployment.
+The Cloudflare staging application serves Streamable HTTP MCP at `/mcp` on
+a dedicated hostname that routes to the **same Worker** as the app. It uses
+the same ten read-only tools and the existing Profile Durable Objects, no
+local files or separate data store. Requests are scoped with
+`AsyncLocalStorage`. The Portal enforces user OAuth; this route additionally
+requires a separate 32+ byte upstream bearer, and cannot reach app routes.
+`log_workout` is deliberately not exposed. See `../cloudflare/README.md`.
 
 ## Tools
 
