@@ -98,6 +98,17 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
   assert.deepEqual(details.set_timeline.map(s=>s.exercise_id),['0025','2291','0025'])
   assert.deepEqual(details.set_timeline.map(s=>s.seconds_since_previous_completion),[null,120,180])
   assert.equal(details.set_timeline[2].seconds_since_previous_same_exercise_completion,300)
+  // Same canonical muscle associations as the app's muscle balance map, through
+  // the authenticated Cloudflare MCP transport (no new endpoint / storage).
+  assert.equal(details.entries[0].muscle_weights.chest,1)
+  assert.equal(details.entries[0].muscle_weights.triceps,0.4)
+  assert.equal(details.entries[0].muscle_source,'catalogue')
+  assert.equal(details.entries[1].muscle_weights['upper-back'],1)
+  assert.equal(details.muscle_overlap_model.available,true)
+  assert.equal(details.set_timeline[2].latest_overlapping_set.exercise_id,'0025')
+  assert.equal(details.set_timeline[2].last_work_by_muscle.chest.exercise_id,'0025')
+  assert.equal(details.set_timeline[2].intervening_overlapping_set_count,0)
+  assert.deepEqual(details.entries[0].sets[1].intervening_muscle_load,{})
   assert.equal(details.rest_estimation_model.seconds_per_rep,3)
   assert.equal(details.rest_estimation_model.interval_estimates_available,true)
   assert.equal(details.set_timeline[1].estimated_set_duration_sec,30)
