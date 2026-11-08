@@ -12,7 +12,7 @@ import {
 } from '../../frontend/src/lib/history.js'
 import { queueView, queueNext, pinState } from '../../frontend/src/lib/queue.js'
 import { exOr, registerCustom } from '../../frontend/src/lib/exercises.js'
-import { isWarmupRow, isFailureSet } from '../../frontend/src/lib/workout-model.js'
+import { isWarmupRow, isFailureSet, hasCompletedWork } from '../../frontend/src/lib/workout-model.js'
 import {
   bestSetOf, best1RM, e1rmSeries, DEFAULT_FORMULA, REP_CAP
 } from '../../frontend/src/lib/onerm.js'
@@ -55,6 +55,56 @@ export function withCustomsIndexed(S, build) {
   try { return build() } finally { registerCustom([]) }
 }
 
+// The app stamps a set's `at` when it is checked off.  It does not record
+// actual start/end of the physical effort.  Imported/legacy sets have no `at`.
+// Never make up an event time from the workout start or the row's UI position.
+function validTimestampMs(at) {
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 && Number.isFinite(new Date(at).getTime()) ? at : null
+}
+function setCompletionMs(s) {
+  return hasCompletedWork(s) ? validTimestampMs(s.at) : null
+}
+
+// Real completion order, independent of the exercise/row order in the plan.
+// Durations are intervals between *completion ticks*, NOT measured rest periods:
+// a new set's work, transitions and any intervening exercises are in that gap.
+function workoutSetTimeline(w, S) {
+  const events = (w.entries || []).flatMap((e, entryIndex) => (e.sets || []).flatMap((s, setIndex) => {
+    const at = setCompletionMs(s)
+    if (at == null) return []
+    return [{
+      exercise_id: e.id,
+      exercise_name: exerciseOf(e.id, S).n,
+      entry_index: entryIndex,
+      set_index: setIndex,
+      set_number: setIndex + 1,
+      completed_at: new Date(at).toISOString(),
+      completed_at_ms: at,
+      weight: Number(s.w) || 0,
+      reps: Number(s.r) || 0,
+      ...(Number(s.sec) > 0 ? { seconds: Number(s.sec) } : {}),
+      ...(Number(s.min) > 0 ? { minutes: Number(s.min) } : {}),
+      ...(typeof s.id === 'string' && s.id ? { set_id: s.id } : {}),
+      ...(isWarmupRow(s) ? { warmup: true } : {}),
+      ...(isFailureSet(s) ? { failure: true } : {}),
+      ...(s.rir != null && Number.isFinite(Number(s.rir)) ? { rir: Number(s.rir) } : {}),
+      ...(s.rpe != null && Number.isFinite(Number(s.rpe)) ? { rpe: Number(s.rpe) } : {}),
+      ...(setNoteOf(s) ? { note: setNoteOf(s) } : {}),
+    }]
+  }))
+  events.sort((a, b) => a.completed_at_ms - b.completed_at_ms || a.entry_index - b.entry_index || a.set_index - b.set_index)
+  const lastByExercise = new Map()
+  events.forEach((e, i) => {
+    const previous = events[i - 1]
+    const previousSame = lastByExercise.get(e.exercise_id)
+    e.completion_order = i + 1
+    e.seconds_since_previous_completion = previous ? (e.completed_at_ms - previous.completed_at_ms) / 1000 : null
+    e.seconds_since_previous_same_exercise_completion = previousSame ? (e.completed_at_ms - previousSame.completed_at_ms) / 1000 : null
+    lastByExercise.set(e.exercise_id, e)
+  })
+  return events
+}
+
 export function entryView(e, S) {
   const ex = exerciseOf(e.id, S)
   // Spread id into the cfg the way every call site in the app does (Workout.jsx, Stats.jsx,
@@ -68,7 +118,8 @@ export function entryView(e, S) {
     body_part: ex.bp || null,
     mode,
     target: e.target || null,
-    sets: (e.sets || []).map(s => ({
+    sets: (e.sets || []).map((s, i) => ({
+      set_number: i + 1,
       done: !!s.done,
       label: setLabel(e.id, { ...s, done: undefined }, cfg),
       // Taken to failure (the app's "F"): RIR 0 for effort when nothing was rated by hand.
@@ -78,6 +129,14 @@ export function entryView(e, S) {
       sec: Number(s.sec) || 0,
       min: Number(s.min) || 0,
       speed: Number(s.speed) || 0,
+      ...(setCompletionMs(s) != null ? {
+        completed_at: new Date(s.at).toISOString(),
+        completed_at_ms: s.at,
+      } : {}),
+      ...(typeof s.id === 'string' && s.id ? { set_id: s.id } : {}),
+      ...(isWarmupRow(s) ? { warmup: true } : {}),
+      ...(s.rir != null && Number.isFinite(Number(s.rir)) ? { rir: Number(s.rir) } : {}),
+      ...(s.rpe != null && Number.isFinite(Number(s.rpe)) ? { rpe: Number(s.rpe) } : {}),
       // The set's own note (set menu → Note in the app), when it has one.
       ...(setNoteOf(s) ? { note: setNoteOf(s) } : {})
     })),
@@ -328,7 +387,7 @@ const gymOf = w => (w && w.gym && typeof w.gym === 'object' && String(w.gym.name
 /** get_workout — full entry/set breakdown for one date. */
 export const getWorkout = {
   name: 'get_workout',
-  description: 'Get the full breakdown of one workout: every exercise, its mode (reps/time/cardio), the target, and per-set labels (e.g. "5 @ 60 kg", "1:30 · 20 kg"), and form_videos: how many sets the user filmed (a count only; the videos are never shared). Identify it by workout_id (from list_workouts) or by date. Use list_workouts first if you don\'t know either.',
+  description: 'Get the full breakdown of a workout, with each set\'s weight, reps, effort and (when recorded) completion timestamp. The `set_timeline` sorts real completion ticks across ALL exercises, irrespective of routine/row order. `seconds_since_previous_completion` and `seconds_since_previous_same_exercise_completion` are elapsed times between ticks, NOT measured rest; they include set execution and transitions. Legacy/imported sets may lack timestamps. Identify the workout by id or date. Use list_workouts first.',
   schema: {
     date: isoDate().optional().describe('The workout date as YYYY-MM-DD. If two sessions share that date, the answer lists them instead and asks for a workout_id.'),
     workout_id: z.string().min(1).optional().describe('The id from list_workouts. Preferred: it names one session even on a day with two.')
@@ -381,6 +440,10 @@ export const getWorkout = {
         return ex.missing ? id : ex.n
       }),
       entries: (w.entries || []).map(e => entryView(e, S)),
+      ...(validTimestampMs(w.start) != null ? { started_at: new Date(w.start).toISOString(), started_at_ms: w.start } : {}),
+      ...(validTimestampMs(w.end) != null ? { ended_at: new Date(w.end).toISOString(), ended_at_ms: w.end } : {}),
+      set_timeline: workoutSetTimeline(w, S),
+      timing_note: 'Completion timestamps are when sets were checked off, not precise end-of-effort measurements. Intervals between completions include the next set, transitions and any other exercises; they are not measured rest. Imported and older sets may have no timestamp.',
       // The number of sets filmed that day (form videos), nothing about the videos themselves.
       ...(setVideoCount(w) ? { form_videos: setVideoCount(w) } : {})
     }

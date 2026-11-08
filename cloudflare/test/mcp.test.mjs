@@ -64,7 +64,13 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
     }})},
     PROFILES: {getByName: name => ({fetch: async req => {
       calls.push(name + ':' + new URL(req.url).pathname)
-      return Response.json({state:{unit:'kg', workouts:[], routines:[{id:'r1',name:'My routine',ex:[]}],customEx:[]},rev:1})
+      const start = Date.parse('2026-11-08T18:00:00.000Z')
+      return Response.json({state:{unit:'kg',
+        workouts:[{id:'w1', d:'2026-11-08', start, end:start+600000, entries:[
+          {id:'0025',sets:[{w:60,r:10,done:true,at:start+120000},{w:60,r:8,done:true,at:start+420000}]},
+          {id:'2291',sets:[{w:70,r:10,done:true,at:start+240000}]},
+        ]}],
+        routines:[{id:'r1',name:'My routine',ex:[]}],customEx:[]},rev:1})
     }})},
   }
   const rpc = (id, method, params={}) => new Request(url, {
@@ -83,6 +89,16 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
   const invocation = await worker.fetch(rpc(3,'tools/call',{name:'list_routines',arguments:{}}),env,{})
   assert.equal(invocation.status,200,'MCP tools/call should succeed: '+await invocation.clone().text())
   assert.match(await invocation.text(),/My routine/)
+  const workout = await worker.fetch(rpc(4,'tools/call',{name:'get_workout',arguments:{workout_id:'w1'}}),env,{})
+  assert.equal(workout.status,200,'get_workout should succeed: '+await workout.clone().text())
+  const replyText = await workout.text()
+  const rpcReply = JSON.parse(replyText.startsWith('event:') ? replyText.split('\n').find(x=>x.startsWith('data:')).slice(5).trim() : replyText)
+  const details = JSON.parse(rpcReply.result.content[0].text)
+  assert.equal(details.entries[0].sets[0].completed_at,'2026-11-08T18:02:00.000Z')
+  assert.deepEqual(details.set_timeline.map(s=>s.exercise_id),['0025','2291','0025'])
+  assert.deepEqual(details.set_timeline.map(s=>s.seconds_since_previous_completion),[null,120,180])
+  assert.equal(details.set_timeline[2].seconds_since_previous_same_exercise_completion,300)
+  assert.match(details.timing_note,/not measured rest/)
   assert(calls.includes('accounts:/_internal/mcp-owner'))
   assert(calls.includes('profile:'+uid+':/api/data'))
 })

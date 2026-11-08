@@ -529,6 +529,74 @@ describe('get_workout', () => {
     })
   })
 
+  test('exposes checked-off timestamps and sorts the real set order across exercises', () => {
+    const [firstId, secondId] = [S.routines[0].ex[0].id, S.routines[1].ex[0].id]
+    expect(firstId).not.toBe(secondId)
+    const start = Date.parse('2026-07-25T09:00:00.000Z')
+    S.workouts = [{
+      id: 'out-of-order', d: '2026-07-25', start, end: start + 600000, name: 'Chronological',
+      entries: [
+        { id: firstId, sets: [
+          { w: 60, r: 10, done: true, at: start + 120000, rir: 2, id: 'set-a1' },
+          { w: 60, r: 8, done: true, at: start + 360000, rpe: 9 },
+          { w: 20, r: 5, done: true, phase: 'warmup' },
+        ] },
+        { id: secondId, sets: [{ w: 30, r: 12, done: true, at: start + 240000, failure: true }] },
+      ]
+    }]
+    _seedStateForTests(S)
+    const w = call('get_workout', { workout_id: 'out-of-order' })
+    expect(w.started_at_ms).toBe(start)
+    expect(w.ended_at).toBe(new Date(start + 600000).toISOString())
+    expect(w.entries[0].sets[0]).toMatchObject({
+      set_number: 1, w: 60, r: 10, rir: 2, set_id: 'set-a1',
+      completed_at_ms: start + 120000, completed_at: new Date(start + 120000).toISOString()
+    })
+    expect(w.entries[0].sets[1].rpe).toBe(9)
+    expect(w.entries[0].sets[2].warmup).toBe(true)
+    expect(w.entries[0].sets[2]).not.toHaveProperty('completed_at')
+    expect(w.set_timeline.map(e => [e.exercise_id, e.set_number])).toEqual([
+      [firstId, 1], [secondId, 1], [firstId, 2],
+    ])
+    expect(w.set_timeline.map(e => e.completion_order)).toEqual([1, 2, 3])
+    expect(w.set_timeline.map(e => e.seconds_since_previous_completion)).toEqual([null, 120, 120])
+    expect(w.set_timeline.map(e => e.seconds_since_previous_same_exercise_completion)).toEqual([null, null, 240])
+    expect(w.timing_note).toMatch(/not measured rest/)
+  })
+
+  test('never invents timings for imported, incomplete or invalid set timestamps', () => {
+    const firstId = S.routines[0].ex[0].id
+    const start = Date.parse('2026-07-25T09:00:00.000Z')
+    S.workouts = [{
+      id: 'legacy', d: '2026-07-25', start, end: start + 300000, name: 'Legacy',
+      entries: [{ id: firstId, sets: [
+        { w: 50, r: 8, done: true },
+        { w: 55, r: 8, done: false, at: start + 100000 },
+        { w: 60, r: 8, done: true, at: NaN },
+        { w: 60, r: 8, done: true, at: '2026-07-25T09:03:00Z' },
+        { w: 60, r: 8, done: true, at: start + 220000 },
+      ] }]
+    }]
+    _seedStateForTests(S)
+    const w = call('get_workout', { workout_id: 'legacy' })
+    expect(w.set_timeline).toHaveLength(1)
+    expect(w.set_timeline[0].set_number).toBe(5)
+    expect(w.set_timeline[0].seconds_since_previous_completion).toBeNull()
+    w.entries[0].sets.slice(0, 4).forEach(s => expect(s).not.toHaveProperty('completed_at_ms'))
+  })
+
+  test('sorts equal completion timestamps deterministically by row position', () => {
+    const [a, b] = [S.routines[0].ex[0].id, S.routines[1].ex[0].id]
+    S.workouts = [{id:'same-tick',d:'2026-07-25',start:1000,end:60000,entries:[
+      {id:a,sets:[{w:20,r:6,done:true,at:5000}]},
+      {id:b,sets:[{w:30,r:7,done:true,at:5000}]},
+    ]}]
+    _seedStateForTests(S)
+    const w = call('get_workout', {workout_id:'same-tick'})
+    expect(w.set_timeline.map(x=>x.exercise_id)).toEqual([a,b])
+    expect(w.set_timeline[1].seconds_since_previous_completion).toBe(0)
+  })
+
   test('throws ENOENT on a date with no workout', () => {
     expect(() => call('get_workout', { date: '1900-01-01' })).toThrow()
   })
