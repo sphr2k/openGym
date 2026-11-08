@@ -129,6 +129,39 @@ sets without `at` are preserved in `entries` and omitted from the chronological
 timeline; the MCP never fabricates timestamps. Set rows do not currently get
 UUIDv7 IDs by default; order comes from `at`, not from an assumed identifier.
 
+### Estimated pause and same-exercise recovery (MCP only)
+
+`get_workout` now calculates a **model-based** rest estimate for normal
+repetition sets, both in `entries[].sets[]` and the chronological `set_timeline`:
+
+- `estimated_set_duration_sec` and `estimated_set_duration_range_sec` assume
+  **3 seconds per repetition**, sensitivity range **2–4 seconds/rep**.
+- `estimated_idle_before_sec` / `_range_sec`: time since the immediately
+  previous checked-off set, minus the estimated execution time of this set.
+  This is passive/non-set time (including walking and equipment setup), not
+  necessarily actual rest.
+- `estimated_same_exercise_recovery_sec` / `_range_sec`: previous completion
+  of the **same exercise** to the estimated start of this set. Includes other
+  exercises performed in between, so is not a direct measure of muscular
+  recovery or absence of exertion.
+- `estimated_passive_since_previous_same_exercise_sec` / `_range_sec`:
+  same-exercise interval excluding estimated execution time of **all intervening
+  sets and the current set**; available only if the duration of every relevant
+  set can be estimated. `intervening_set_count` and
+  `intervening_exercise_ids` show the intervening work.
+
+All values are in seconds, rounded to 0.1 seconds. Set
+`seconds_per_rep` in `get_workout` (1–8, default 3) to examine other tempo
+assumptions. `rest_estimation_model` reports the assumptions and source data
+coverage. The ranges are tempo-sensitivity scenarios, **not confidence
+intervals**, and do not reflect delayed check-offs or other measurement errors.
+No rest-interval estimate is made when any completed set lacks its timestamp,
+when timestamp gaps contradict the minimum estimated duration, or for timed,
+cardio, unilateral, drop-set or rest-pause rows lacking a supported duration.
+None of these estimates is a validated physiological muscle or cardiovascular
+recovery score; intervening sets can load the same muscle groups and influence
+systemic fatigue.
+
 ## Logging workouts
 
 `log_workout` lets you tell your LLM what you did instead of tapping it in:

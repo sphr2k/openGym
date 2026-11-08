@@ -22,6 +22,7 @@ import { buildSessionEntries, startsFromLast } from '../../frontend/src/lib/sess
 import { programmesOf, programmeStatus, programmeRoutineIds } from '../../frontend/src/lib/programmes.js'
 import { readingsOf, dailyModeOf } from '../../frontend/src/lib/weigh-ins.js'
 import { setVideosOf, setVideoCount } from '../../frontend/src/lib/set-videos.js'
+import { DEFAULT_SECONDS_PER_REP, estimatedRepDuration, estimateWorkoutRest } from './rest-estimation.js'
 
 /* ---------- helpers ---------- */
 
@@ -105,7 +106,12 @@ function workoutSetTimeline(w, S) {
   return events
 }
 
-export function entryView(e, S) {
+function setDurationFields(s, mode, secondsPerRep) {
+  const d = estimatedRepDuration(s, mode, secondsPerRep)
+  return d ? { estimated_set_duration_sec: d.seconds, estimated_set_duration_range_sec: [d.min, d.max] } : {}
+}
+
+export function entryView(e, S, secondsPerRep = DEFAULT_SECONDS_PER_REP) {
   const ex = exerciseOf(e.id, S)
   // Spread id into the cfg the way every call site in the app does (Workout.jsx, Stats.jsx,
   // progression.js) — the sheet saves a cardio target as {sets, min, speed} with no id and no
@@ -129,6 +135,7 @@ export function entryView(e, S) {
       sec: Number(s.sec) || 0,
       min: Number(s.min) || 0,
       speed: Number(s.speed) || 0,
+      ...setDurationFields(s, mode, secondsPerRep),
       ...(setCompletionMs(s) != null ? {
         completed_at: new Date(s.at).toISOString(),
         completed_at_ms: s.at,
@@ -387,12 +394,13 @@ const gymOf = w => (w && w.gym && typeof w.gym === 'object' && String(w.gym.name
 /** get_workout — full entry/set breakdown for one date. */
 export const getWorkout = {
   name: 'get_workout',
-  description: 'Get the full breakdown of a workout, with each set\'s weight, reps, effort and (when recorded) completion timestamp. The `set_timeline` sorts real completion ticks across ALL exercises, irrespective of routine/row order. `seconds_since_previous_completion` and `seconds_since_previous_same_exercise_completion` are elapsed times between ticks, NOT measured rest; they include set execution and transitions. Legacy/imported sets may lack timestamps. Identify the workout by id or date. Use list_workouts first.',
+  description: 'Get workout sets, real check-off timestamps and the chronological set_timeline across all exercises. Estimated_set_duration_sec, estimated_idle_before_sec (passive time before this set), estimated_same_exercise_recovery_sec (time since prior same-exercise finish minus this set duration, INCLUDES intervening exercises), and estimated_passive_since_previous_same_exercise_sec (subtracts intervening work) are modelled using seconds_per_rep (default 3), with scenario ranges. Neither is actual measured rest or local muscle recovery. Intervals require all completed sets timestamped; timed/cardio and complex sets have no tempo estimate. Identify by workout_id or date; call list_workouts first.',
   schema: {
     date: isoDate().optional().describe('The workout date as YYYY-MM-DD. If two sessions share that date, the answer lists them instead and asks for a workout_id.'),
-    workout_id: z.string().min(1).optional().describe('The id from list_workouts. Preferred: it names one session even on a day with two.')
+    workout_id: z.string().min(1).optional().describe('The id from list_workouts. Preferred: it names one session even on a day with two.'),
+    seconds_per_rep: z.number().min(1).max(8).optional().describe('Assumed average duration in seconds per repetition for model-based passive-rest and same-exercise recovery estimates. Defaults to 3; scenario range is +/- 1 second per rep, NOT statistical confidence.')
   },
-  handler: ({ date, workout_id }) => {
+  handler: ({ date, workout_id, seconds_per_rep }) => {
     const S = getState()
     if (!S) return noState()
     const workouts = S.workouts || []
@@ -423,6 +431,19 @@ export const getWorkout = {
     } else {
       const e = new Error('get_workout needs either workout_id or date'); e.code = 'EINVAL'; throw e
     }
+    const tempo = seconds_per_rep ?? DEFAULT_SECONDS_PER_REP
+    const entries = (w.entries || []).map(e => entryView(e, S, tempo))
+    const { timeline, model } = estimateWorkoutRest(workoutSetTimeline(w, S), w.entries || [], tempo)
+    // The same useful pause estimates are available on the individual sets,
+    // not only in the workout-wide chronological timeline.
+    const restFields = ['estimated_idle_before_sec', 'estimated_idle_before_range_sec',
+      'estimated_same_exercise_recovery_sec', 'estimated_same_exercise_recovery_range_sec',
+      'estimated_passive_since_previous_same_exercise_sec', 'estimated_passive_since_previous_same_exercise_range_sec',
+      'intervening_set_count', 'intervening_exercise_ids', 'rest_estimate_unavailable']
+    for (const event of timeline) {
+      const set = entries[event.entry_index]?.sets?.[event.set_index]
+      if (set) for (const key of restFields) if (Object.hasOwn(event, key)) set[key] = event[key]
+    }
     return {
       id: w.id || null,
       date: w.d,
@@ -439,10 +460,11 @@ export const getWorkout = {
         const ex = exerciseOf(id, S)
         return ex.missing ? id : ex.n
       }),
-      entries: (w.entries || []).map(e => entryView(e, S)),
+      entries,
       ...(validTimestampMs(w.start) != null ? { started_at: new Date(w.start).toISOString(), started_at_ms: w.start } : {}),
       ...(validTimestampMs(w.end) != null ? { ended_at: new Date(w.end).toISOString(), ended_at_ms: w.end } : {}),
-      set_timeline: workoutSetTimeline(w, S),
+      set_timeline: timeline,
+      rest_estimation_model: model,
       timing_note: 'Completion timestamps are when sets were checked off, not precise end-of-effort measurements. Intervals between completions include the next set, transitions and any other exercises; they are not measured rest. Imported and older sets may have no timestamp.',
       // The number of sets filmed that day (form videos), nothing about the videos themselves.
       ...(setVideoCount(w) ? { form_videos: setVideoCount(w) } : {})
