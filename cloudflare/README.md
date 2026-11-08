@@ -236,7 +236,7 @@ to the intended owner; an authenticated Portal caller can read that owner's
 workout history. `log_workout` is intentionally NOT exposed.
 
 This integration fails closed unless the OpenGym staging account database has
-**exactly one active account**, which must be the unique owner. No client token,
+**exactly one active account**. The Portal Access policy must limit access to the intended owner. No client token,
 passkey, or broad administrative credential is stored in the MCP Worker.
 
 ~~~sh

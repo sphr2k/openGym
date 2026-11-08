@@ -85,3 +85,17 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
   assert(calls.includes('accounts:/_internal/mcp-owner'))
   assert(calls.includes('profile:'+uid+':/api/data'))
 })
+
+test('internal MCP profile selection accepts a non-owner single active user and rejects ambiguity', async () => {
+  const {AccountDO} = await import('../src/accounts.js')
+  const request = new Request('https://worker.invalid/_internal/mcp-owner')
+  const one = {env:{},sql:{exec:()=>({toArray:()=>[{id:'user-without-owner-flag'}]})}}
+  const success = await AccountDO.prototype.respond.call(one,request)
+  assert.equal(success.status,200)
+  assert.deepEqual(await success.json(),{id:'user-without-owner-flag'})
+  for (const users of [[],[{id:'a'},{id:'b'}]]) {
+    const mock={env:{},sql:{exec:()=>({toArray:()=>users})}}
+    const failure=await AccountDO.prototype.respond.call(mock,request)
+    assert.equal(failure.status,503)
+  }
+})

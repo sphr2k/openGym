@@ -234,13 +234,13 @@ export class AccountDO {
     }
     // Internal-only identity lookup for the read-only MCP gateway. The public Worker
     // blocks /_internal/*, and the MCP route separately requires a long random secret.
-    // A single active owner profile is the only supported personal deployment.
+    // The staging profile may not have owner/admin flags (FIRST_USER_ADMIN=false).
+    // Fail closed unless there is exactly one active profile to avoid data leakage.
     if (route === "GET /_internal/mcp-owner") {
-      const users = this.queryOne("SELECT COUNT(*) AS n FROM users WHERE disabled=0");
-      const owners = this.sql.exec("SELECT id FROM users WHERE owner=1 AND disabled=0").toArray();
-      if (users?.n !== 1 || owners.length !== 1)
-        return json({error:"MCP requires a single active owner profile"},503);
-      return json({id:owners[0].id});
+      const users = this.sql.exec("SELECT id FROM users WHERE disabled=0 LIMIT 2").toArray();
+      if (users.length !== 1)
+        return json({error:"MCP requires exactly one active profile"},503);
+      return json({id:users[0].id});
     }
     if (route === "GET /_internal/health") {
       const row = this.queryOne("SELECT COUNT(*) AS n FROM users");
