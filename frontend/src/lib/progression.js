@@ -341,7 +341,13 @@ export function readSession(entry, fallback) {
   const reps = sets.map((s, k) => (s.done && heavyEnough(s, k) ? (s.r || 0) : 0))
   // Prescribed back-off rows intentionally have different loads; preserve their
   // usual top-set progression instead of interpreting them as an ad hoc test.
-  const mix = step > 0 ? { mixedLoads: false, workingWeight: loadOf(entry, sets) } : mixedWorkLoads(sets, target)
+  // Imported/freestyle history and assisted machines keep their historical
+  // top-set (or minimum-help) semantics: only a session with an explicit set
+  // prescription can distinguish a trial load from its regular work sets.
+  const hasPrescribedRows = Number(entry?.target?.sets) > 0
+  const mix = step > 0 || !hasPrescribedRows || isAssisted(entry)
+    ? { mixedLoads: false, workingWeight: loadOf(entry, sets) }
+    : mixedWorkLoads(sets, target)
   return {
     mode, target, goal, reps,
     ...mix,
@@ -507,7 +513,10 @@ export function nextPrescription(S, cfg, routine) {
     ? ['That’s the whole stack: {0} {1} is the heaviest it goes, so the weight stays.', weight, unit]
     : ['You’ve outgrown the rack: {0} {1} is your heaviest dumbbell, so the weight stays.', weight, unit] })
   const excessiveJumpHold = (weight, next, extra = {}) => {
-    if (assisted || isBw(cfg) || !excessiveLoadJump(weight, next)) return null
+    // A user-entered load increment, pinned unit or machine/dumbbell inventory
+    // is an explicit progression decision, not the app's generic default step.
+    // Preserve those preferences; the guard only protects automatic defaults.
+    if (assisted || isBw(cfg) || owned || cfg.inc > 0 || S.exUnit?.[cfg.id]?.unit || !excessiveLoadJump(weight, next)) return null
     const percent = Math.round((next - weight) / weight * 100)
     return { policy, kind: 'hold', weight, ...extra, why: [
       'The next available weight ({0} {1}) would increase the load by {2}%, above the {3}% automatic-step limit. Hold the load or progress manually.',
