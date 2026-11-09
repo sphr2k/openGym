@@ -36,10 +36,9 @@ import { weighInAt } from '../lib/bodyweight.js'
 import { perSetSessions, perSetLines, dropOffSet } from '../lib/per-set.js'
 import { relativeSeries } from '../lib/relative-strength.js'
 import {
-  hasEffort, hasEstimableEffort, displayScale, scaleName, toScale, avgRir, effortSummary, effortWeeks,
+  hasEffort, displayScale, scaleName, toScale, avgRir, effortSummary, effortWeeks,
   effortHistogram, isHardSet, HARD_RIR, rirOf
 } from '../lib/effort.js'
-import { anchorsByWorkout, resolveSetRir } from '../lib/recovery.js'
 import { Button, Segmented, SelectRow, Row, MenuButton } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
@@ -396,30 +395,13 @@ function EffortCard({ S }) {
   const [win, setWin] = useState(90)
   const kind = displayScale(S)
   const hd = scaleName(kind)
-  // Every set without a logged rating is estimated (the same precedence fatigue scoring uses:
-  // logged effort first, Epley-inverse estimate against the 90-day anchor second), so the
-  // average always speaks for the whole training, not just the rated subset. Estimates never
-  // override a real rating, so a fully rated window still reads exactly its logged numbers.
-  const opts = useMemo(() => ({ unit: S.unit, bodyweightKg: profileBodyweightKg(S) }), [S.unit, S.bodyweight])
-  const anchors = useMemo(
-    () => anchorsByWorkout(S.workouts, opts),
-    [S.workouts, opts],
-  )
-  // The summary, the weekly curve and the histogram each walk the same sets; a set's reading
-  // depends only on the anchors and options, so it is worked out once per set, not three times.
-  const resolve = useMemo(() => {
-    const seen = new WeakMap()
-    return (s, w, e) => {
-      if (seen.has(s)) return seen.get(s)
-      const r = resolveSetRir(s, s, e, w, anchors.get(w), opts)
-      seen.set(s, r)
-      return r
-    }
-  }, [anchors, opts])
-  const sum = effortSummary(S, win, resolve)
-  const weeks = effortWeeks(S, win, resolve)
-  const hist = effortHistogram(S, win, resolve)
-  const estimated = sum.est > 0
+  // An Epley inverse compared with a 90-day estimated 1RM measures a
+  // performance deficit from a historical anchor, NOT reps actually left at
+  // failure. Only logged RIR/RPE and explicit failure flags can support these
+  // effort summaries. Unrated sets stay unrated (effort.js default resolver).
+  const sum = effortSummary(S, win)
+  const weeks = effortWeeks(S, win)
+  const hist = effortHistogram(S, win)
   // The week's set count rides along in the tooltip, because the pair is the reading:
   // volume up with effort up is fatigue piling up, volume up with effort flat is adaptation.
   const pts = weeks.map(w => ({ t: w.t, y: toScale(kind, w.rir), note: t('{0} sets', w.sets) }))
@@ -430,10 +412,10 @@ function EffortCard({ S }) {
     : { key: b.rir, label: hd + ' ' + binLabel(b), n: b.n, share: b.pct || 0, color: 'var(--label-3)' })
 
   return <div className="card effort-card">
-    <h2>{t('Effort')} <span className="dim">· {t('how close to failure')}{estimated ? ' · ' + t('estimated') : ''}</span></h2>
+    <h2>{t('Effort')} <span className="dim">· {t('how close to failure')}</span></h2>
     <Segmented className="seg-range" value={win} onChange={setWin}
       options={[{ value: 30, label: '30d' }, { value: 90, label: '90d' }, { value: 365, label: '1Y' }, { value: 0, label: t('All') }]} />
-    {sum.rated === 0 && sum.est === 0 ? <div className="muted small">{t('No rated sets in this period.')}</div> : <>
+    {sum.rated === 0 ? <div className="muted small">{t('No rated sets in this period.')}</div> : <>
       {/* One figure leads (the average); the share of hard sets is its sentence, in ink, not a
           second headline in yellow competing with it. */}
       <div className="effort-head">
@@ -442,9 +424,7 @@ function EffortCard({ S }) {
       </div>
       <div className="small effort-sub">
         {sum.hardPct != null && <><b>{Math.round(sum.hardPct * 100)}%</b> {t('at {0} {1} or harder', hd, fmtNum(toScale(kind, HARD_RIR)))} · </>}
-        <span className="dim">{estimated
-          ? t('{0} rated · {1} estimated of {2} sets', sum.rated, sum.est, sum.done)
-          : t('{0} of {1} finished sets rated', sum.rated, sum.done)}</span>
+        <span className="dim">{t('{0} of {1} finished sets rated', sum.rated, sum.done)}</span>
       </div>
       {effortOf(S) === 'none' && <div className="small effort-off">
         {t('Effort per set is off. Turn it on in Settings → Workout to keep rating.')}
@@ -459,9 +439,6 @@ function EffortCard({ S }) {
       <h4 className="sec">{t('Where the sets land')}</h4>
       <StackBar parts={parts} ariaLabel={t('Where the sets land')}
         fmtValue={p => (p.n ? p.n + ' · ' + Math.round(p.share * 100) + '%' : '–')} />
-      <div className="small dim effort-foot">
-        {t('Most working sets belong close to failure, not at it. Half at the floor and half at the top still average out to a healthy-looking middle.')}
-      </div>
     </>}
   </div>
 }
@@ -839,7 +816,7 @@ export default function Stats() {
     return best || sets[0] || null
   }
 
-  const effortCard = effortOn && (hasEffort(S) || hasEstimableEffort(S))
+  const effortCard = effortOn && hasEffort(S)
   const timeCard = workouts.some(w => entryTimes(w).length)
   // With Effort off the time per exercise moves to the end of Lifts, so no part is a lone card.
   const hasEffortSect = effortCard || (effortOn && timeCard)

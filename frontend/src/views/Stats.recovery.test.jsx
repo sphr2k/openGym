@@ -380,29 +380,24 @@ describe('Stats estimated effort', () => {
   const effortHead = () => [...container.querySelectorAll('.card h2')]
     .find(h => h.textContent.trim().startsWith('Effort'))
 
-  it('badges estimated numbers on unrated import history', async () => {
+  it('does not invent an Effort card from completely unrated imports', async () => {
     resetFixture([workout('unrated', BASE_NOW, [
       entry('0025', Array.from({ length: 6 }, () => set(true, { w: 80, r: 8 }))),
     ])])
     await mountStats()
-    const head = effortHead()
-    expect(head, 'expected an Effort card for estimable history').toBeTruthy()
-    // Six self-anchored sets estimate RIR 0: a real average with an honest badge.
-    expect(head.textContent).toContain('estimated')
-    expect(container.textContent).toContain('0 rated')
+    expect(effortHead()).toBeFalsy()
+    // The same load and repetitions do not demonstrate actual effort or RIR.
+    expect(container.textContent).not.toContain('6 estimated')
   })
 
-  // The summary, the weekly curve and the histogram share one reading per set.
-  it('reads each set once for the whole card', async () => {
+  it('does not use the 1RM-based proxy to populate Effort statistics', async () => {
     resetFixture([workout('unrated', BASE_NOW, [
       entry('0025', Array.from({ length: 6 }, () => set(true, { w: 80, r: 8 }))),
     ])])
     resolveSetRir.mockClear()
     await mountStats()
-    expect(effortHead().textContent).toContain('estimated')
-    const sets = resolveSetRir.mock.calls.map(c => c[0])
-    expect(sets.length).toBeGreaterThan(0)
-    expect(new Set(sets).size).toBe(sets.length)
+    expect(effortHead()).toBeFalsy()
+    expect(resolveSetRir).not.toHaveBeenCalled()
   })
 
   it('keeps the logged view badge-free on rated history', async () => {
@@ -415,7 +410,7 @@ describe('Stats estimated effort', () => {
     expect(head.textContent).not.toContain('estimated')
   })
 
-  it('estimates the unrated rest when the only ratings are imported failures', async () => {
+  it('only counts observed failure flags rather than estimating other sets', async () => {
     // The v1.4.0 import case: six sets taken to failure across six sessions, every
     // other set unrated. Averaging rated sets only would read 0 RIR / 100% hard.
     const day = (ago, w, fw) => workout(`import-${ago}`, BASE_NOW - ago * DAY, [
@@ -432,14 +427,12 @@ describe('Stats estimated effort', () => {
     await mountStats()
     const card = effortHead()?.closest('.card')
     expect(card, 'expected an Effort card for failure-marked imports').toBeTruthy()
-    expect(effortHead().textContent).toContain('estimated')
-    // Six imported failures plus estimates for the eighteen unrated sets.
-    expect(card.textContent).toContain('6 rated · 18 estimated of 24 sets')
-    // The average speaks for the whole training, not just the failures.
+    expect(effortHead().textContent).not.toContain('estimated')
+    // Exactly six explicitly marked failure sets; others are unrated.
+    expect(card.textContent).toContain('6 of 24 finished sets rated')
     const avg = card.querySelector('.stat-v').textContent.trim()
-    expect(avg).toMatch(/RIR$/)
-    expect(parseFloat(avg)).toBeGreaterThan(0)
-    expect(card.querySelector('.effort-sub b').textContent).not.toBe('100%')
+    expect(avg).toMatch(/0 RIR$/)
+    expect(card.querySelector('.effort-sub b').textContent).toBe('100%')
     // The failures stay a visible share at the hard end of the stacked bar's key.
     const zeroBin = [...card.querySelectorAll('.sstack-legend li')]
       .find(li => li.querySelector('.slegend-l')?.textContent.trim() === 'RIR 0')
@@ -447,7 +440,7 @@ describe('Stats estimated effort', () => {
 
     // The resolver applies on every window, not just the default 90d.
     await click(buttonWithText(card.querySelector('.seg'), '30d'))
-    expect(card.textContent).toContain('2 rated · 6 estimated of 8 sets')
+    expect(card.textContent).toContain('2 of 8 finished sets rated')
   })
 })
 
