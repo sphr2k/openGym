@@ -88,6 +88,14 @@ export { defaultIncrement }
 export function weightIncrement(cfg, unit) {
   return cfg && cfg.inc > 0 ? cfg.inc : defaultIncrement(cfg?.id, unit)
 }
+// Conservative *automation* guard, not a physiological threshold: when the
+// smallest available load step is too large relative to the working weight,
+// the program should not silently prescribe it as the next working load.
+// Lifters remain free to choose a heavier load manually.
+export const MAX_AUTO_LOAD_JUMP_PCT = 15
+export function excessiveLoadJump(current, next) {
+  return current > 0 && next > current && (next - current) / current * 100 > MAX_AUTO_LOAD_JUMP_PCT + 1e-9
+}
 export const DEFAULT_SEC_INCREMENT = 5
 // Where adding another set of push-ups stops being progress and starts being a way to spend
 // an evening. Past this the honest advice is load or a harder variation (issue #33).
@@ -264,6 +272,23 @@ function loadOf(entry, sets) {
   return loaded.length ? Math.min(...loaded) : 0
 }
 
+// A user may test a heavier weight on one set, or drop weight mid-session.
+// The highest/lowest recorded weight is a real achievement, but it is NOT
+// necessarily the weight the next session should prescribe for every set.
+// Use the most frequent completed work weight as a safe baseline; a tie
+// prefers the session's recorded target, then its first completed work set.
+function mixedWorkLoads(sets, target) {
+  const weights = sets.filter(s => s.done).map(s => Number(s.w) || 0)
+  if (!weights.length) return { mixedLoads: false, workingWeight: 0 }
+  const counts = new Map()
+  for (const w of weights) counts.set(w, (counts.get(w) || 0) + 1)
+  const count = Math.max(...counts.values())
+  const candidates = [...counts.keys()].filter(w => counts.get(w) === count)
+  const prescribed = Number(target?.weight)
+  const workingWeight = candidates.includes(prescribed) ? prescribed : weights.find(w => candidates.includes(w))
+  return { mixedLoads: counts.size > 1, workingWeight }
+}
+
 export function readSession(entry, fallback) {
   const target = (entry && entry.target) || fallback || {}
   const mode = modeOf({ ...target, id: entry && entry.id })
@@ -314,9 +339,13 @@ export function readSession(entry, fallback) {
   const top = step > 0 && sets.length ? Number(sets[0].w) || 0 : 0
   const heavyEnough = (s, k) => !(top > 0) || k === 0 || (Number(s.w) || 0) >= backoffAt(top, k, step) - 0.05
   const reps = sets.map((s, k) => (s.done && heavyEnough(s, k) ? (s.r || 0) : 0))
+  // Prescribed back-off rows intentionally have different loads; preserve their
+  // usual top-set progression instead of interpreting them as an ad hoc test.
+  const mix = step > 0 ? { mixedLoads: false, workingWeight: loadOf(entry, sets) } : mixedWorkLoads(sets, target)
   return {
     mode, target, goal, reps,
-    weight: loadOf(entry, sets),
+    ...mix,
+    weight: mix.mixedLoads ? mix.workingWeight : loadOf(entry, sets),
     count: reps.length,                                   // the dimension bodyweight work grows (#33)
     low: reps.length ? Math.min(...reps) : 0,
     amrap: reps.length ? reps[reps.length - 1] : 0,       // Greyskull's final set
@@ -477,6 +506,14 @@ export function nextPrescription(S, cfg, routine) {
   const toppedOut = (weight, extra = {}) => ({ policy, kind: 'hold', weight, ...extra, why: onStack
     ? ['That’s the whole stack: {0} {1} is the heaviest it goes, so the weight stays.', weight, unit]
     : ['You’ve outgrown the rack: {0} {1} is your heaviest dumbbell, so the weight stays.', weight, unit] })
+  const excessiveJumpHold = (weight, next, extra = {}) => {
+    if (assisted || isBw(cfg) || !excessiveLoadJump(weight, next)) return null
+    const percent = Math.round((next - weight) / weight * 100)
+    return { policy, kind: 'hold', weight, ...extra, why: [
+      'The next available weight ({0} {1}) would increase the load by {2}%, above the {3}% automatic-step limit. Hold the load or progress manually.',
+      next, unit, percent, MAX_AUTO_LOAD_JUMP_PCT
+    ] }
+  }
 
 
   // The routine's own sessions of this exercise, or the exercise's whole history when the
@@ -534,6 +571,15 @@ export function nextPrescription(S, cfg, routine) {
       return { policy, kind: 'hold', ...held, reps: aim, why }
     }
     return { policy, kind: 'hold', ...held, reps: cfg.reps || undefined, why }
+  }
+
+  // A mixed-load session cannot establish that its heaviest experimental set
+  // is the new baseline for *all* prescribed sets. Keep the most frequently
+  // performed load instead; do not count this ambiguous session as a stall.
+  if (mode === 'reps' && last.mixedLoads) return {
+    policy, kind: 'hold', weight: last.workingWeight,
+    ...(triple && Array.isArray(last.target?.rowReps) ? { sets: last.target.rowReps.length, rowReps: last.target.rowReps, reps: last.target.rowReps[0] } : {}),
+    why: ['Mixed working weights last time. Hold {0} {1}; a heavier test set alone does not progress the whole session.', last.workingWeight, unit]
   }
 
   const stalls = stallCount(sessions, policy)
@@ -686,7 +732,10 @@ export function nextPrescription(S, cfg, routine) {
       return out('hold', w, [...got.slice(0, n - 1).map(() => top), aim], ['Same weight, aim for {0} reps on the last set.', aim])
     }
     if (n < setsMax) return out('up', w, [...got.map(() => top), bottom], ['{0} reps in every set! Add a set at {1} reps.', top, bottom])
-    return out('up', harder(w, inc), startRows(bottom), assisted
+    const nextWeight = harder(w, inc)
+    const jumpHold = excessiveJumpHold(w, nextWeight, { reps: top, sets: n, rowReps: Array(n).fill(top) })
+    if (jumpHold) return jumpHold
+    return out('up', nextWeight, startRows(bottom), assisted
       ? ['Top of the range on all {0} sets. {1} {2} less help, back to {3} sets of {4}.', n, inc, unit, setsMin, bottom]
       : ['Top of the range on all {0} sets. {1} {2} more, back to {3} sets of {4}.', n, inc, unit, setsMin, bottom])
   }
@@ -703,6 +752,8 @@ export function nextPrescription(S, cfg, routine) {
     if (last.ok && last.low >= top) {
       if (topped(w)) return toppedOut(w, { reps: top })
       const up = harder(w, inc)
+      const jumpHold = excessiveJumpHold(w, up, { reps: top })
+      if (jumpHold) return jumpHold
       // Over owned bells the step is whatever the next one is: 9 → 11 is 2 kg, 18 → 19 is 1.
       const by = owned ? Math.round((up - w) * 100) / 100 : inc
       return {
@@ -734,11 +785,17 @@ export function nextPrescription(S, cfg, routine) {
     const dbl = policy === 'greyskull' && last.goal > 0 && last.amrap >= last.goal * 2
     if (topped(w)) return toppedOut(w)
     const up = harder(w, dbl ? inc * 2 : inc)
+    // Greyskull's double jump is optional. If it is too large, try one
+    // regular increment before giving up on automatic load progression.
+    const single = dbl ? harder(w, inc) : up
+    const chosen = excessiveLoadJump(w, up) && !excessiveLoadJump(w, single) ? single : up
+    const jumpHold = excessiveJumpHold(w, chosen)
+    if (jumpHold) return jumpHold
     // Over owned bells the jump is the distance to the bell it lands on.
-    const step = owned ? Math.round((up - w) * 100) / 100 : dbl ? inc * 2 : inc
+    const step = owned ? Math.round((chosen - w) * 100) / 100 : chosen - w
     return {
-      policy, kind: 'up', weight: up,
-      why: dbl
+      policy, kind: 'up', weight: chosen,
+      why: dbl && chosen === up
         ? ['Last set hit {0} reps, twice the target! Take a double jump of {1} {2}.', last.amrap, step, unit]
         : assisted
           ? ['Every rep last time. {0} {1} less help.', step, unit]
