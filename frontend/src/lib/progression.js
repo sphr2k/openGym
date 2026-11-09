@@ -264,6 +264,23 @@ function loadOf(entry, sets) {
   return loaded.length ? Math.min(...loaded) : 0
 }
 
+// A user may test a heavier weight on one set, or drop weight mid-session.
+// The highest/lowest recorded weight is a real achievement, but it is NOT
+// necessarily the weight the next session should prescribe for every set.
+// Use the most frequent completed work weight as a safe baseline; a tie
+// prefers the session's recorded target, then its first completed work set.
+function mixedWorkLoads(sets, target) {
+  const weights = sets.filter(s => s.done).map(s => Number(s.w) || 0)
+  if (!weights.length) return { mixedLoads: false, workingWeight: 0 }
+  const counts = new Map()
+  for (const w of weights) counts.set(w, (counts.get(w) || 0) + 1)
+  const count = Math.max(...counts.values())
+  const candidates = [...counts.keys()].filter(w => counts.get(w) === count)
+  const prescribed = Number(target?.weight)
+  const workingWeight = candidates.includes(prescribed) ? prescribed : weights.find(w => candidates.includes(w))
+  return { mixedLoads: counts.size > 1, workingWeight }
+}
+
 export function readSession(entry, fallback) {
   const target = (entry && entry.target) || fallback || {}
   const mode = modeOf({ ...target, id: entry && entry.id })
@@ -314,9 +331,13 @@ export function readSession(entry, fallback) {
   const top = step > 0 && sets.length ? Number(sets[0].w) || 0 : 0
   const heavyEnough = (s, k) => !(top > 0) || k === 0 || (Number(s.w) || 0) >= backoffAt(top, k, step) - 0.05
   const reps = sets.map((s, k) => (s.done && heavyEnough(s, k) ? (s.r || 0) : 0))
+  // Prescribed back-off rows intentionally have different loads; preserve their
+  // usual top-set progression instead of interpreting them as an ad hoc test.
+  const mix = step > 0 ? { mixedLoads: false, workingWeight: loadOf(entry, sets) } : mixedWorkLoads(sets, target)
   return {
     mode, target, goal, reps,
-    weight: loadOf(entry, sets),
+    ...mix,
+    weight: mix.mixedLoads ? mix.workingWeight : loadOf(entry, sets),
     count: reps.length,                                   // the dimension bodyweight work grows (#33)
     low: reps.length ? Math.min(...reps) : 0,
     amrap: reps.length ? reps[reps.length - 1] : 0,       // Greyskull's final set
@@ -534,6 +555,15 @@ export function nextPrescription(S, cfg, routine) {
       return { policy, kind: 'hold', ...held, reps: aim, why }
     }
     return { policy, kind: 'hold', ...held, reps: cfg.reps || undefined, why }
+  }
+
+  // A mixed-load session cannot establish that its heaviest experimental set
+  // is the new baseline for *all* prescribed sets. Keep the most frequently
+  // performed load instead; do not count this ambiguous session as a stall.
+  if (mode === 'reps' && last.mixedLoads) return {
+    policy, kind: 'hold', weight: last.workingWeight,
+    ...(triple && Array.isArray(last.target?.rowReps) ? { sets: last.target.rowReps.length, rowReps: last.target.rowReps, reps: last.target.rowReps[0] } : {}),
+    why: ['Mixed working weights last time. Hold {0} {1}; a heavier test set alone does not progress the whole session.', last.workingWeight, unit]
   }
 
   const stalls = stallCount(sessions, policy)
