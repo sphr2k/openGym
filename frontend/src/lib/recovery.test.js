@@ -279,7 +279,7 @@ describe('fatigueOf and strengthOf', () => {
     expect(strength.biceps).toBe(STRENGTH_FLOOR)
   })
 
-  it('discounts ramp-up rows through the RIR anchor instead of charging full sets', () => {
+  it('does not infer effort from an unmarked light ramp-up row', () => {
     const ramped = workoutAt(SINGLE.id, NOW, [
       { done: true, w: 40, r: 8 },
       { done: true, w: 80, r: 8 },
@@ -287,10 +287,10 @@ describe('fatigueOf and strengthOf', () => {
     const plain = doneWorkoutAt(SINGLE.id, NOW, 2)
     const rampedValue = fatigueOf([ramped], NOW)[SINGLE_SLUG]
     const plainValue = fatigueOf([plain], NOW)[SINGLE_SLUG]
-    // The 80 kg top set anchors at ~101 kg, so the 40 kg row reads RIR 10 and costs
-    // the floor weight: 1 + 0.3 effective sets against 2 full ones.
-    expect(rampedValue).toBeCloseTo(expectedSets(1 + FATIGUE_RIR_FLOOR_WEIGHT, 1, SINGLE_SLUG), 10)
-    expect(rampedValue).toBeLessThan(plainValue)
+    // Without a warm-up flag or observed RIR, the 40 kg set cannot be assumed easy.
+    // The estimate against a 90-day strength anchor is not a fatigue measurement.
+    expect(rampedValue).toBeCloseTo(expectedSets(2, 1, SINGLE_SLUG), 10)
+    expect(rampedValue).toBeCloseTo(plainValue, 10)
     expect(rampedValue).toBeGreaterThan(fatigueOf([doneWorkoutAt(SINGLE.id, NOW)], NOW)[SINGLE_SLUG])
   })
 })
@@ -424,11 +424,9 @@ describe('causal session scoring', () => {
     expect(withoutHistory).toBeGreaterThan(withHistory)
   })
 
-  it('rates a back-off session below repeating the full load', () => {
-    // Same athlete, same exercise: 4 work sets + 4 half-weight back-offs costs less
-    // than 8 work sets. The 100x8 top set anchors at ~127 kg, so each 50x8 back-off
-    // reads RIR 10 and costs the floor weight - while absolute loads across sessions
-    // stay comparable only through anchors and gains, never through raw tonnage.
+  it('does not invent reduced effort from a lighter unlabelled back-off set', () => {
+    // Half the load may be intentional technique work or a hard set under fatigue.
+    // Without actual RIR, the relative weight alone cannot establish effort.
     const backOff = workoutAt(SINGLE.id, NOW, [
       ...Array.from({ length: 4 }, () => ({ done: true, w: 100, r: 8 })),
       ...Array.from({ length: 4 }, () => ({ done: true, w: 50, r: 8 })),
@@ -437,16 +435,16 @@ describe('causal session scoring', () => {
     // doneWorkoutAt uses w:80 for every set, so each set is its entry's best.
     const fullLoad = workoutAt(SINGLE.id, NOW, Array.from({ length: 8 }, () => ({ done: true, w: 100, r: 8 })))
 
-    expect(fatigueOf([backOff], NOW)[SINGLE_SLUG]).toBeLessThan(fatigueOf([fullLoad], NOW)[SINGLE_SLUG])
+    expect(fatigueOf([backOff], NOW)[SINGLE_SLUG]).toBeCloseTo(fatigueOf([fullLoad], NOW)[SINGLE_SLUG], 10)
     expect(fatigueOf([repeated], NOW)[SINGLE_SLUG]).toBeCloseTo(fatigueOf([fullLoad], NOW)[SINGLE_SLUG], 10)
   })
 
-  it('rates a lighter current week below repeating the established load', () => {
+  it('does not infer current effort from lighter weights after heavy weeks', () => {
     const prior = [-21, -14, -7].map(days => loadedWorkout(NOW + days * DAY, 100))
     const lighter = fatigueOf([...prior, loadedWorkout(NOW, 50)], NOW).chest
     const repeated = fatigueOf([...prior, loadedWorkout(NOW, 100)], NOW).chest
 
-    expect(lighter).toBeLessThan(repeated)
+    expect(lighter).toBeCloseTo(repeated, 10)
   })
 
   it('scores identical structures at different absolute loads equally', () => {
@@ -492,17 +490,16 @@ describe('RIR quality weighting', () => {
     )
   })
 
-  it('scores a deload week below the work weeks that anchor it', () => {
-    // Three weeks of 8x100 anchor at ~127 kg; the 8x50 deload then reads RIR 10
-    // (floor weight) instead of 8 full sets - the case session-local intensity
-    // could never see, since every deload set is its own session's best.
+  it('does not label an unrated lighter deload week as lower effort', () => {
+    // Relative strength deficit is not proof of greater reps in reserve:
+    // all these sessions have identical set counts and no rated effort.
     const work = [-21, -14, -7].map(days => workoutAt(
       SINGLE.id, NOW + days * DAY, Array.from({ length: 8 }, () => ({ done: true, w: 100, r: 8 })),
     ))
     const deload = workoutAt(SINGLE.id, NOW, Array.from({ length: 8 }, () => ({ done: true, w: 50, r: 8 })))
     const repeat = workoutAt(SINGLE.id, NOW, Array.from({ length: 8 }, () => ({ done: true, w: 100, r: 8 })))
     expect(fatigueOf([...work, deload], NOW)[SINGLE_SLUG])
-      .toBeLessThan(fatigueOf([...work, repeat], NOW)[SINGLE_SLUG])
+      .toBeCloseTo(fatigueOf([...work, repeat], NOW)[SINGLE_SLUG], 10)
   })
 })
 
@@ -597,12 +594,12 @@ describe('warm-up flag in strength and fatigue', () => {
   })
 })
 
-describe('drop-set drops add discounted fatigue sets on top of the main set', () => {
-  // The drop carries its own (lighter) load against the 90-day anchor: a 60 kg drop
-  // after an 80 kg top set reads RIR 10 and costs the floor weight on top of the full set.
-  const dropShare = FATIGUE_RIR_FLOOR_WEIGHT
+describe('drop-set drops add additional counted work on top of the main set', () => {
+  // Without a separate logged effort rating for the drop, its lower load
+  // does not prove that the lifter had unused reps in reserve.
+  const dropShare = 1
 
-  it('a drop-set drop adds its own RIR-weighted sets', () => {
+  it('a drop-set drop adds another unrated set rather than inferred high RIR', () => {
     const dropRow = { done: true, type: 'dropset', w: 80, r: 8, drops: [{ w: 60, r: 6 }] }
     const expected = expectedSets(1 + dropShare, 1, SINGLE_SLUG)
 
@@ -702,7 +699,7 @@ describe('loads are relative, units are irrelevant', () => {
 
   // Relative intensity needs the load the body actually moved: for bodyweight work that is body
   // mass plus the added load, never the added load alone.
-  it('estimates a weighted bodyweight back-off against the body-mass-inclusive anchor', () => {
+  it('does not use a weighted bodyweight capacity proxy as actual RIR', () => {
     const weight = musclesOf(bodyweight)[bodyweightSlug]
     const workout = {
       d: new Date(NOW).toISOString(), start: NOW, unit: 'kg', bw: 80,
@@ -714,9 +711,10 @@ describe('loads are relative, units are irrelevant', () => {
     const backOffRir = 30 * (anchor / 90 - 1) - 8
     expect(backOffRir).toBeGreaterThan(4)
     expect(backOffRir).toBeLessThan(5)
+    // Even if the Epley inverse says 4+ reps, the set might have been at failure.
+    // Only an explicitly logged RIR may discount the fatigue weighting.
     expect(fatigueOf([workout], NOW, { unit: 'kg' })[bodyweightSlug])
-      .toBeCloseTo(expectedSets(1 + rirWeightFor(backOffRir), weight, bodyweightSlug), 10)
-    expect(rirWeightFor(backOffRir)).toBeGreaterThan(FATIGUE_RIR_FLOOR_WEIGHT)
+      .toBeCloseTo(expectedSets(2, weight, bodyweightSlug), 10)
   })
 
   it('anchors bodyweight work on the stamped, then profile, then reference body mass', () => {

@@ -220,9 +220,9 @@ function loadKgFor(ex, entry, set, workout, opts = {}, row = set) {
 
 /**
  * How much of a hard set a proximity-to-failure reading is worth. Logged effort
- * (`rir`/`rpe` via effort.js) always wins; otherwise the RIR is estimated against
- * the exercise's 90-day rolling best (see `estimateSetRir`). At or near failure a
- * set counts full, far from it no less than the floor: easy work still moves blood.
+ * (`rir`/`rpe` via effort.js) is used when provided. An unrated set does not
+ * identify its true distance to failure; the Epley-inverse performance gap is
+ * not a physiological RIR measure and must not discount such work.
  *
  * @param {number|null} rir Reps in reserve, or null when intensity is unknown.
  * @returns {number} Set weight in [0.3, 1].
@@ -264,17 +264,16 @@ export function estimateSetRir(set, anchorKg, unit) {
 // drop-set drops count as extra sets; rest-pause `clusters` are NOT extra because
 // the row's own set already totals every burst (see applyIntensifierPlan/history.js).
 // Cardio rows scale by duration; timed holds still count as one set. Each set is
-// scaled by its RIR weight: logged effort first, estimated RIR second, full credit
-// when intensity is unknowable (rings, load-less imports). Anchors come
-// from the 90-day window ending at this session, never from its future.
-function sessionEffSets(workout, anchors, opts = {}) {
+// scaled by explicitly logged effort when known; ordinary unrated work counts
+// once without pretending a relative 1RM deficit represents true RIR.
+function sessionEffSets(workout) {
   const sums = emptyMuscleMap(0)
   const score = (row, set, entry, weights, requireDone = true) => {
     if (requireDone && row?.done !== true) return
-    const resolved = resolveSetRir(row, set, entry, workout, anchors, opts)
-    const count = resolved?.source !== 'logged' && isWarmupRow(set)
+    const logged = rirOf(row)
+    const count = logged == null && isWarmupRow(set)
       ? FATIGUE_RIR_FLOOR_WEIGHT
-      : rirWeightFor(resolved?.rir)
+      : rirWeightFor(logged)
     const mode = modeOf({ ...(entry?.target || {}), id: entry?.id })
     const minutes = Number(row?.min)
     const durationScale = mode === 'cardio' && Number.isFinite(minutes)
@@ -406,8 +405,7 @@ function fatigueStimuli(workouts, current, opts = {}) {
     .filter(item => Number.isFinite(item.timestamp) && item.timestamp > poolCutoff)
     .sort((a, b) => a.timestamp - b.timestamp || a.index - b.index)
   const scored = pool.filter(item => item.timestamp > scanCutoff)
-  const byWorkout = anchorsByWorkout(pool.map(item => item.workout), opts)
-  const effSets = pool.map(item => sessionEffSets(item.workout, byWorkout.get(item.workout), opts))
+  const effSets = pool.map(item => sessionEffSets(item.workout))
   const byMuscle = Object.fromEntries(MUSCLES.map(slug => [slug, []]))
 
   for (const item of scored) {
