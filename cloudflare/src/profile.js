@@ -5,6 +5,15 @@ import { forClient, json, jsonBody, randomHex, validateProfile } from "./protoco
 
 const WID_KEEP = 50;
 const MAX_REBASE = 5;
+// Read-only MCP snapshots, separate from the canonical profile and its merge protocol.
+const LIVE_TTL_MS = 24 * 60 * 60 * 1000;
+const LIVE_MAX_BYTES = 512 * 1024;
+const LIVE_DEVICE_RE = /^[a-f0-9-]{36}$/i;
+const validLive = a => a && typeof a === "object" && !Array.isArray(a) &&
+  typeof a.id === "string" && a.id.length > 0 && a.id.length <= 128 &&
+  typeof a.d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(a.d) &&
+  Number.isFinite(a.start) && a.start > 0 && Array.isArray(a.entries);
+
 const clone = value => JSON.parse(JSON.stringify(value));
 
 // The DO coordinates OCC across awaits. Only pointer + revision + media
@@ -15,6 +24,7 @@ export class ProfileDO {
     this.env=env;
     this.sql=ctx.storage.sql;
     this.store=new ProfileStore(ctx,env);
+    this.sql.exec("CREATE TABLE IF NOT EXISTS mcp_live_workouts (device_id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL, synced_at INTEGER NOT NULL, payload TEXT NOT NULL)");
     initMedia(this);
   }
 
@@ -32,6 +42,31 @@ export class ProfileDO {
     if(unreadable) return json({error:"state unreadable"},503);
     if(profileDeleted(this)) return json({error:"profile removed",code:"profile-deleted"},410);
     return json({state:forClient(state),rev});
+  }
+
+  // Called only inside the successful profile pointer transaction. In particular, a
+  // rejected 409 must never publish a stale active session.
+  writeLive(deviceId, active, updatedAt) {
+    if (typeof deviceId !== "string" || !LIVE_DEVICE_RE.test(deviceId)) return;
+    const now = Date.now();
+    this.sql.exec("DELETE FROM mcp_live_workouts WHERE synced_at < ?", now - LIVE_TTL_MS);
+    if (!active) {
+      this.sql.exec("DELETE FROM mcp_live_workouts WHERE device_id=?", deviceId);
+      return;
+    }
+    if (!validLive(active)) return;
+    const payload = JSON.stringify(active);
+    if (new TextEncoder().encode(payload).length > LIVE_MAX_BYTES) return;
+    this.sql.exec("INSERT INTO mcp_live_workouts(device_id,updated_at,synced_at,payload) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET updated_at=excluded.updated_at,synced_at=excluded.synced_at,payload=excluded.payload",
+      deviceId, Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : now, now, payload);
+  }
+
+  readLive() {
+    if (profileDeleted(this)) return json({error:"profile removed",code:"profile-deleted"},410);
+    const now = Date.now();
+    this.sql.exec("DELETE FROM mcp_live_workouts WHERE synced_at < ?", now - LIVE_TTL_MS);
+    return json({workouts:this.sql.exec("SELECT payload,updated_at,synced_at FROM mcp_live_workouts ORDER BY synced_at DESC").toArray()
+      .map(row => ({...JSON.parse(row.payload), updated_at:row.updated_at, synced_at:row.synced_at}))});
   }
 
   async write(body) {
@@ -86,6 +121,9 @@ export class ProfileDO {
           if(this.mediaSweepRunning) return "maintenance";
           if(!this.store.commit(baseline,next,snapshot)) return "conflict";
           noteReferences(this,next);
+          // active itself remains device-local. Snapshot it only for clients that
+          // explicitly identify their device; older clients preserve prior behavior.
+          this.writeLive(body.liveDeviceId, body.state?.active, body.state?._ts);
           return "committed";
         });
       }catch(err) {
@@ -125,6 +163,8 @@ export class ProfileDO {
 
   async fetch(request) {
     const path=new URL(request.url).pathname;
+    if(request.method==="GET" && path==="/_internal/mcp-live-workouts")
+      return this.readLive();
     if(request.method==="POST" && path==="/_internal/delete-all")
       return deleteAllProfileData(this);
     if(request.method==="GET" && (path==="/api/data" || path==="/api/data/rev"))

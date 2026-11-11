@@ -90,3 +90,44 @@ test("server-only metadata is not exposed to clients", async()=>{
   assert.equal(now._prior,undefined);
   assert.equal(now._unstamped,undefined);
 });
+
+
+test("live MCP snapshots are per-device, excluded from account state, and clear on finish", async () => {
+  const {profile} = fixture();
+  const a = "11111111-1111-4111-8111-111111111111";
+  const b = "22222222-2222-4222-8222-222222222222";
+  const live = id => ({id,d:"2026-11-11",start:1794412800000,name:"Full Body",routineIds:["r1"],
+    entries:[{id:"2291",sets:[{w:71,r:12,done:true,at:1794412879943},{w:71,r:10,done:false}]}]});
+  const sync = (id,active,baseRev) => profile.fetch(req("PUT",{
+    state:{workouts:[],routines:[],active,_ts:1794412880000},baseRev,stamped:true,liveDeviceId:id
+  }));
+  assert.equal((await sync(a,live("live-a"),0)).status,200);
+  assert.equal((await sync(b,live("live-b"),1)).status,200);
+  const view = async () => (await parse(await profile.fetch(new Request("https://example.test/_internal/mcp-live-workouts")))).body.workouts;
+  assert.deepEqual((await view()).map(w=>w.id).sort(),["live-a","live-b"]);
+  assert.equal((await parse(await profile.fetch(req("GET")))).body.state.active,undefined);
+  assert.equal((await sync(a,live("stale"),0)).status,409);
+  assert.deepEqual((await view()).map(w=>w.id).sort(),["live-a","live-b"],"a rejected revision cannot publish stale live work");
+  assert.equal((await sync(a,null,2)).status,200);
+  assert.deepEqual((await view()).map(w=>w.id),["live-b"]);
+  assert.equal((await sync(b,null,3)).status,200);
+  assert.deepEqual(await view(),[]);
+});
+
+test("legacy clients cannot clobber live sessions; account deletion purges snapshots", async () => {
+  const {profile}=fixture();
+  const dev="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const active={id:"live",d:"2026-11-11",start:Date.now(),entries:[]};
+  assert.equal((await profile.fetch(req("PUT",{
+    state:{workouts:[],routines:[],active},liveDeviceId:dev,stamped:true
+  }))).status,200);
+  assert.equal((await profile.fetch(req("PUT",{
+    state:{workouts:[],routines:[]},stamped:true
+  }))).status,200);
+  const view=()=>profile.fetch(new Request("https://test/_internal/mcp-live-workouts"));
+  assert.equal((await (await view()).json()).workouts.length,1);
+  const deletion=await profile.fetch(new Request("https://test/_internal/delete-all",{method:"POST"}));
+  assert.equal(deletion.status,200);
+  assert.equal((await view()).status,410);
+  assert.equal(profile.sql.exec("SELECT count(*) AS n FROM mcp_live_workouts").toArray()[0].n,0);
+});

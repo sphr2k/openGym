@@ -624,7 +624,7 @@ describe('get_workout', () => {
 
   test('an unknown workout_id is an error, not the wrong workout', () => {
     expect(() => call('get_workout', { workout_id: 'nope' })).toThrow()
-    expect(() => call('get_workout', {})).toThrow()
+    expect(call('get_workout', {}).status).toBe('completed')
   })
 
   test('renders reps/time/cardio set labels in the lib format on a synthetic workout', () => {
@@ -1534,4 +1534,50 @@ describe('get_workout set notes', () => {
       _seedStateForTests(S)
     }
   })
+})
+
+
+/* ---------- in-progress workouts (Cloudflare MCP projection) ---------- */
+test('list_workouts and get_workout share live and completed session semantics', () => {
+  const now = Date.now()
+  const active = {id:'live-test',d:FAKE_TODAY_ISO,start:now-600000,
+    name:'Live workout',routineIds:['r-live'],
+    entries:[{id:LEG_PRESS_ID,sets:[
+      {w:100,r:10,done:true,at:now-60000},
+      {w:100,r:10,done:false}
+    ]}],
+    updated_at:now-60000,synced_at:now}
+  S._liveWorkouts=[active]
+  _seedStateForTests(S)
+  const list=call('list_workouts')
+  expect(list.workouts[0]).toMatchObject({
+    id:'live-test',status:'in_progress',sets_done:1,sets_planned:2,
+    stale:false,routine_id:'r-live'
+  })
+  expect(list.workouts[0].synced_at).toBe(new Date(now).toISOString())
+  const w=call('get_workout')
+  expect(w).toMatchObject({id:'live-test',status:'in_progress',sets_done:1,sets_planned:2})
+  expect(w.entries[0].sets.map(s=>s.done)).toEqual([true,false])
+  expect(w.set_timeline).toHaveLength(1)
+  expect(call('get_workout',{workout_id:'live-test'}).id).toBe('live-test')
+  expect(call('get_workout',{status:'completed'}).status).toBe('completed')
+  expect(call('get_workout',{date:FAKE_TODAY_ISO,status:'in_progress'}).id).toBe('live-test')
+
+  // Two concurrent devices on the same day require an ID for precision.
+  S._liveWorkouts.push({...active,id:'another-device',synced_at:now-1000})
+  expect(call('get_workout',{date:FAKE_TODAY_ISO}).ambiguous).toBe(true)
+  expect(call('get_workout').ambiguous).toBe(true)
+
+  // Finishing the same workout takes precedence, even while a stale device
+  // snapshot remains in the durable-object table.
+  S.workouts.push({...active,end:now,prs:[]})
+  expect(call('list_workouts').workouts.filter(w=>w.id==='live-test')).toHaveLength(1)
+  expect(call('get_workout',{workout_id:'live-test'}).status).toBe('completed')
+
+  S.workouts=S.workouts.filter(w=>w.id!=='live-test')
+  S._liveWorkouts=[{...active,synced_at:now-6*60*1000}]
+  expect(call('list_workouts').workouts[0].stale).toBe(true)
+  expect(call('get_workout').status).toBe('completed') // stale snapshot does not hijack default lookup
+  S._liveWorkouts=[{...active,synced_at:now-25*60*60*1000}]
+  expect(call('list_workouts').workouts.some(w=>w.status==='in_progress')).toBe(false)
 })
