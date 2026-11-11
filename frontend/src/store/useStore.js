@@ -33,6 +33,19 @@ import { sanitizeAccent } from '../lib/accent.js'
 import { registerExerciseAliases } from '../lib/exercise-aliases.js'
 
 const KEY = 'gym_state_v1'
+// A stable ID for this installation, used only to isolate MCP live snapshots.
+// Never included in the synced profile, so another device cannot clear our session.
+const LIVE_DEVICE_KEY = 'gym_mcp_live_device'
+function liveDeviceId() {
+  try {
+    let id = localStorage.getItem(LIVE_DEVICE_KEY)
+    if (!id || !/^[a-f0-9-]{36}$/i.test(id)) {
+      id = crypto.randomUUID()
+      localStorage.setItem(LIVE_DEVICE_KEY, id)
+    }
+    return id
+  } catch { return null }
+}
 // Where the saved copy stands with the server: the revision it descends from, and its own `_ts`
 // at that moment. `rev` goes back to the server as `baseRev` on every push, so a write over a
 // document this device never saw is refused (409) instead of dropping another device's work;
@@ -806,6 +819,8 @@ export const useStore = create((set, get) => {
     // against the copy it holds, exactly as it would for that app (api/sync-stamps.js).
     const legacy = readLegacy()
     const body = { state: S, stamped: !(legacy && legacy.owner === get().user?.id) }
+    const deviceId = liveDeviceId()
+    if (deviceId) body.liveDeviceId = deviceId
     if (asReplace != null) { body.baseRev = asReplace.rev; if (asReplace.wid) body.baseWid = asReplace.wid }
     else if (!force && base) { body.baseRev = base.rev; if (base.wid) body.baseWid = base.wid }
     try {

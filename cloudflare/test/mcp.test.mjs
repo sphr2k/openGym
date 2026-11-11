@@ -63,7 +63,15 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
       return Response.json({id:uid})
     }})},
     PROFILES: {getByName: name => ({fetch: async req => {
-      calls.push(name + ':' + new URL(req.url).pathname)
+      const path = new URL(req.url).pathname
+      calls.push(name + ':' + path)
+      if (path === '/_internal/mcp-live-workouts') return Response.json({workouts:[{
+        id:'live1',d:'2026-11-11',start:Date.now()-600000,name:'Live session',
+        routineIds:['r1'],entries:[{id:'2291',sets:[
+          {w:71,r:10,done:true,at:Date.now()-120000},
+          {w:71,r:10,done:false}
+        ]}],updated_at:Date.now()-120000,synced_at:Date.now()
+      }]})
       const start = Date.parse('2026-11-08T18:00:00.000Z')
       return Response.json({state:{unit:'kg',
         workouts:[{id:'w1', d:'2026-11-08', start, end:start+600000, entries:[
@@ -127,8 +135,18 @@ test('authenticated MCP exposes read-only tools backed by the profile Durable Ob
   const customDetails = JSON.parse(customRpc.result.content[0].text)
   assert.equal(customDetails.rest_estimation_model.seconds_per_rep,4)
   assert.equal(customDetails.set_timeline[2].estimated_same_exercise_recovery_sec,268)
+  const running = await worker.fetch(rpc(6,'tools/call',{name:'get_workout',arguments:{}}),env,{})
+  const runningText=await running.text()
+  const runningRpc=JSON.parse(runningText.startsWith('event:') ? runningText.split('\n').find(x=>x.startsWith('data:')).slice(5).trim() : runningText)
+  const liveDetails=JSON.parse(runningRpc.result.content[0].text)
+  assert.equal(liveDetails.status,'in_progress')
+  assert.equal(liveDetails.entries[0].sets[0].done,true)
+  assert.equal(liveDetails.entries[0].sets[1].done,false)
+  assert.equal(liveDetails.sets_done,1)
+  assert.equal(liveDetails.sets_planned,2)
   assert(calls.includes('accounts:/_internal/mcp-owner'))
   assert(calls.includes('profile:'+uid+':/api/data'))
+  assert(calls.includes('profile:'+uid+':/_internal/mcp-live-workouts'))
 })
 
 test('internal MCP profile selection accepts a non-owner single active user and rejects ambiguity', async () => {
