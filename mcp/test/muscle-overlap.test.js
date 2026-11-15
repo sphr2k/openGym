@@ -41,6 +41,18 @@ describe('OpenGym muscle-metadata based set overlap',()=>{
     expect(JSON.stringify(entries)).toBe(original) // pure / no profile leakage
   })
 
+  test('interleaved lateral raises do not invent triceps fatigue before the next chest press set',()=>{
+    const entries = [
+      {id:'0576',sets:[log(12,120),log(10,360)]},
+      {id:'0178',sets:[log(13,240)]},
+    ]
+    const {profiles,timeline:t} = run(entries,[[0,0,120],[1,0,240],[0,1,360]])
+    expect(profiles[1].muscle_weights).toEqual({'side-delts':1,trapezius:0.4})
+    expect(t[2].latest_overlapping_set.exercise_id).toBe('0576')
+    expect(t[2].intervening_overlapping_set_count).toBe(0)
+    expect(t[2].intervening_muscle_load).toEqual({})
+  })
+
   test('a leg press interleaved with rowing is not automatically classified as shared local muscle load',()=>{
     const entries=[{id:'2267',sets:[log(17,120),log(15,360)]},{id:'2661',sets:[log(16,240)]}]
     const {timeline:t} = run(entries,[[0,0,120],[1,0,240],[0,1,360]])

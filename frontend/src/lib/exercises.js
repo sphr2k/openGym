@@ -1,5 +1,6 @@
 import { EXDB, EXALIAS } from './exercises-data.js'
 import MUSCLE_MAP from './exercise-muscle-map.json' with { type: 'json' }
+import { EXERCISE_SECONDARY_REMOVALS } from './exercise-muscle-overrides.js'
 import V13_IDS from './catalogue-v13-ids.json' with { type: 'json' }
 import { t, getVersion, exerciseNameSearchText, bindOwnExercise } from './i18n-core.js'
 import { exerciseAliases, aliasSnapshot } from './exercise-aliases.js'
@@ -11,9 +12,16 @@ export { EXDB }
 // machines and Olympic lifts, ExRx-informed and owner-approved), that layer is applied here, so
 // the pickers and every muscle map see the corrected model while EXDB stays the plain list.
 const catalogueExercise = ex => {
+  // Fork-local corrections are applied at lookup time, never to generated catalogue data.
+  // Both the frontend and MCP import this canonical exercise index.
+  const excluded = EXERCISE_SECONDARY_REMOVALS[ex?.id]
+  const corrected = excluded
+    ? { ...ex, sm: (ex.sm || []).filter(m => !excluded.includes(m)), mg: '' }
+    : ex
+  if (excluded) corrected.mg = corrected.sm[0] || ''
   const metadata = MUSCLE_MAP[ex?.id]
-  if (!metadata) return ex
-  const out = { ...ex, ...metadata }
+  if (!metadata) return corrected
+  const out = { ...corrected, ...metadata }
   if (Array.isArray(out.primaries)) out.primaries = [...out.primaries]
   if (Array.isArray(out.secondaries)) out.secondaries = [...out.secondaries]
   return out
