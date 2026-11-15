@@ -1,5 +1,8 @@
 // German UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Extrapoliert",
+  "How was this 10RM estimated?": "Wie wurde dieses 10RM geschätzt?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Uhren",
   "Set once": "Einmal einstellen",

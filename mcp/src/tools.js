@@ -1,4 +1,6 @@
 import { strengthProgress, BASELINE_FORMULA, explainEstimate } from '../../shared/strength/e10rm.ts'
+import { currentDbLoad, historyAs } from '../../frontend/src/lib/dumbbells.js'
+import { gymSplitView } from '../../frontend/src/lib/gym-split.js'
 /* The read-only tools. Each handler returns JSON; labels.js pre-substitutes any
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
@@ -14,7 +16,7 @@ import {
   isBw, modeOf, workoutVolume, setsDone, setUnitsTotal, effectiveRoutine, effectiveRoutineIds, lastEntryFor, workoutAt
 } from '../../frontend/src/lib/history.js'
 import { queueView, queueNext, pinState } from '../../frontend/src/lib/queue.js'
-import { exOr, registerCustom, allExercises, searchScore, CATEGORIES } from '../../frontend/src/lib/exercises.js'
+import { exOr, registerCustom, allExercises, searchScore, CATEGORIES, isAssisted } from '../../frontend/src/lib/exercises.js'
 import { isWarmupRow, isFailureSet, hasCompletedWork } from '../../frontend/src/lib/workout-model.js'
 import {
   bestSetOf, best1RM, e1rmSeries, DEFAULT_FORMULA, REP_CAP
@@ -380,7 +382,10 @@ export const getStrengthProgress = {
     const sample=(S.workouts || []).flatMap(w=>w.entries||[]).find(e=>String(e.id)===String(exercise_id))
     if(isAssisted(exercise_id)||sample?.target?.assisted||isBw({ ...sample?.target,id:exercise_id }))
       return {exercise_id,error:'bodyweight/assisted exercises are not comparable by stack load'}
-    const result=strengthProgress(S.workouts || [],exercise_id)
+    // Compare equivalent dumbbell loads in a single meaning, as the frontend does.
+    // Only explicit each/total histories convert; legacy as-entered loads stay unchanged.
+    const normalized=historyAs(gymSplitView(S,exercise_id),exercise_id,currentDbLoad(S,exercise_id))
+    const result=strengthProgress(normalized.workouts || [],exercise_id)
     return {...result,exercise_name:ex.n || exercise_id,unit:S.unit || 'kg',
       explanation:result.all_time_pr?explainEstimate(result.all_time_pr,result.model,'en',S.unit || 'kg'):null,
       baseline_formula:BASELINE_FORMULA}

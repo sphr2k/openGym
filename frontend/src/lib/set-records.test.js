@@ -59,6 +59,11 @@ describe('record kinds', () => {
     expect(sessionPrs(S, [more])).toMatchObject({ prs: [BENCH], e1prs: [] })
     expect(entryRecords(more, b)[0]).toContain('e1rm')
   })
+  it('extrapolated high-repetition sets cannot trigger a workout PR through weight fallback', () => {
+    const history = S0([wo('a', '2026-10-01', [set(5, 10)])])
+    const high = { id: BENCH, sets: [set(6, 21)] }
+    expect(sessionPrs(history, [high]).prs).toEqual([])
+  })
   it('on an assistance machine less help is the record, and it has no 1RM or volume', () => {
     const A = S0([wo('a', '2026-10-01', [set(30, 6)], ASSISTED)])
     const ab = recordBaseline(A, ASSISTED)

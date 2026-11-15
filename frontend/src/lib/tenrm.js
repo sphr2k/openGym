@@ -22,8 +22,9 @@ export function best10RM(entry, model = null) {
     const sets = isSideSet(row) ? [row.sides.L, row.sides.R] : [row]
     for (const set of sets) {
       if (!set?.done) continue
-      const est = estimate10RM(set.w, set.r, rirOf(set), model)
-      if (est != null && (best == null || est > best)) best = est
+      const estimate = estimateSet({ w: Number(set.w), r: Number(set.r), rir: rirOf(set), done: true }, model)
+      // High-repetition estimates are visible in the workout, but cannot set a strength PR.
+      if (estimate?.pr_eligible && (best == null || estimate.value > best)) best = estimate.value
     }
   }
   return best
@@ -47,8 +48,16 @@ export const uses10RM = entry => metricModeForEntry(entry) === 'reps' &&
   !entry?.target?.assisted && !isAssisted(entry?.id) && !isBw({ ...entry?.target, id: entry?.id })
 
 export function isEntryRecord(state, entry) {
-  return uses10RM(entry) && best10RM(entry) != null ? is10RMRecord(state, entry)
-    : beatsWeight(entry.id, bestWeightForEntry(entry), bestWeightFor(state, entry.id, entryDbLoad(entry)))
+  if (uses10RM(entry)) {
+    if (best10RM(entry) != null) return is10RMRecord(state, entry)
+    // A high-repetition estimate is display-only; do not resurrect a weight-only PR
+    // through the legacy fallback when no ordinary-range set exists.
+    const extrapolated = metricRowsForEntry(entry, 'reps').some(row =>
+      (isSideSet(row) ? [row.sides.L, row.sides.R] : [row])
+        .some(set => set?.done && estimateSet(set)?.range_quality === 'high_rep_extrapolation'))
+    if (extrapolated) return false
+  }
+  return beatsWeight(entry.id, bestWeightForEntry(entry), bestWeightFor(state, entry.id, entryDbLoad(entry)))
 }
 
 export function workoutRecords(state, entries) {

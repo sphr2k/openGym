@@ -1598,3 +1598,29 @@ describe('search_exercises (sub-connect-146)', () => {
     expect(toolAllowed('search_exercises', { workouts: 'off', plans: 'off', bodyweight: 'view' })).toBe(false)
   })
 })
+
+describe('get_strength_progress', () => {
+  test('normalizes historical each/total dumbbell loads for MCP PR and trend', () => {
+    const id = '0289'
+    S.workouts = [
+      {id:'a',d:'2026-10-01',entries:[{id,target:{dbLoad:'each'},sets:[{w:20,r:10,done:true}]}]},
+      {id:'b',d:'2026-10-08',entries:[{id,target:{dbLoad:'total'},sets:[{w:40,r:10,done:true}]}]},
+    ]
+    S.dbLoad = { ...(S.dbLoad || {}), [id]: {mode:'each',_ts:1} }
+    _seedStateForTests(S)
+    const p = call('get_strength_progress', {exercise_id:id})
+    expect(p.series.map(s=>s.value)).toEqual([20,20])
+    expect(p.all_time_pr.value).toBe(20)
+    expect(p.trend).toBe(20)
+  })
+  test('exposes correct pounds units in the MCP explanation', () => {
+    const id = '0289'
+    S.unit = 'lb'
+    S.workouts=[{id:'a',d:'2026-10-01',entries:[{id,sets:[{w:40,r:10,done:true}]}]}]
+    _seedStateForTests(S)
+    const p=call('get_strength_progress',{exercise_id:id})
+    expect(p.unit).toBe('lb')
+    expect(p.explanation).toContain('40.0 lb')
+    expect(p.explanation).not.toContain('40.0 kg')
+  })
+})

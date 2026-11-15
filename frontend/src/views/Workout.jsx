@@ -1,7 +1,7 @@
 import { withDefaultRir } from '../lib/default-rir.js'
 import { historyAs } from '../lib/dumbbells.js'
 import { gymSplitView } from '../lib/gym-split.js'
-import { estimateSet, calibrate, explainEstimate } from '../../../shared/strength/e10rm.ts'
+import { estimateSet, calibrate } from '../../../shared/strength/e10rm.ts'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
@@ -45,7 +45,7 @@ import { durationSheet } from '../components/DurationWheel.jsx'
 import { REST_MAX, fmtRest, restWheelValue } from '../lib/duration.js'
 import { youtubeSearchUrl } from '../lib/youtube.js'
 import { openExternal } from '../components/CustomMedia.jsx'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow, swapActiveWorkoutToBackup, setNoteSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow, swapActiveWorkoutToBackup, setNoteSheet, e10rmInfoSheet } from '../sheets.jsx'
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
@@ -207,7 +207,6 @@ function ExerciseBlock({ entryIdx, compact, listed, dense, editing, onToggle, on
   const optsId = useId()
   const entry = S.active.entries[entryIdx]
   const e10Model = calibrate(historyAs(gymSplitView(S, entry.id), entry.id, entryDbLoad(entry))?.workouts || [], entry.id)
-  const e10Language = typeof navigator !== 'undefined' ? navigator.language : 'en'
 
   // The set whose form video plays under its row (SetVideo.jsx), by index; one at a time.
   const [videoAt, setVideoAt] = useState(null)
@@ -1076,13 +1075,12 @@ function ExerciseBlock({ entryIdx, compact, listed, dense, editing, onToggle, on
             const candidate = isSideSet(s) ? null : estimateSet(s, e10Model)
             if (!s.done || !candidate) return null
             return <div className="small dim" style={{ padding: '2px 12px 6px', fontVariantNumeric: 'tabular-nums' }}>
-              ≈ 10RM {fmtNum(candidate.value)} {S.unit}{' '}
-              <details style={{ display: 'inline-block', position: 'relative', verticalAlign: 'middle' }}>
-                <summary aria-label="How was this 10RM estimated?" style={{ cursor: 'pointer', display: 'inline', textDecoration: 'underline dotted', marginLeft: 3 }}>ⓘ</summary>
-                <div role="note" style={{ position: 'absolute', zIndex: 30, width: 'min(290px, 78vw)', maxWidth: '78vw', right: 0, padding: 12, borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface, var(--bg))', color: 'var(--text)', boxShadow: '0 8px 22px rgba(0,0,0,.2)', whiteSpace: 'normal', fontVariantNumeric: 'normal' }}>
-                  {explainEstimate(candidate, e10Model, e10Language, S.unit)}
-                </div>
-              </details>
+              ≈ 10RM {fmtNum(candidate.value)} {S.unit}
+              {candidate.range_quality === 'high_rep_extrapolation' && <> · {t('Extrapolated')}</>}
+              {' '}<button type="button" className="subtle" aria-haspopup="dialog"
+                aria-label={t('How was this 10RM estimated?')}
+                style={{ cursor: 'pointer', textDecoration: 'underline dotted', padding: '3px 6px', minHeight: 32 }}
+                onClick={() => e10rmInfoSheet(candidate, e10Model, S.unit)}>ⓘ</button>
             </div>
           })()}
           {/* The set's own note (lib/set-notes.js): a quiet line under the row, a tap edits it. */}

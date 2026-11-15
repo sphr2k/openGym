@@ -1,9 +1,11 @@
 // Shared pure TypeScript-compatible calculations. No profile/model state is persisted.
 // Node >=22.18 supports native type stripping; Vite imports this module directly.
-export const E10RM_VERSION = '1.0.0'
+export const E10RM_VERSION = '1.1.0'
 export const BASELINE_FORMULA = 'weight * (30 + reps + RIR) / 40'
 export const PERSONAL_FORMULA = 'weight * exp(k * (reps + RIR - 10))'
 export const BASE_K = Math.log(41 / 40)
+export const STANDARD_MAX_EFFECTIVE_REPS = 15
+export const DISPLAY_MAX_EFFECTIVE_REPS = 30
 const DAY = 86400000
 const finite = n => typeof n === 'number' && Number.isFinite(n)
 const dateMs = s => { const t=Date.parse(s); return Number.isFinite(t) ? t : null }
@@ -18,14 +20,18 @@ export function estimateSet(s, model=null) {
   const weight=Number(s?.w ?? s?.weight), reps=Number(s?.r ?? s?.reps)
   if(s?.done===false || s?.warmup || s?.warmUp || s?.phase==='warmup' || !finite(weight) || weight<=0 || !Number.isInteger(reps) || reps<1) return null
   const effort=effortForSet(s), effectiveReps=reps+effort.rir
-  if(effectiveReps<6 || effectiveReps>15) return null
-  const personal=model?.method==='individual_exponential'
+  if(effectiveReps<6 || effectiveReps>DISPLAY_MAX_EFFECTIVE_REPS) return null
+  // Display high-rep estimates as explicitly lower-confidence extrapolations, never PRs.
+  // A personalized curve is validated in the regular 6-15 rep range, not beyond it.
+  const extrapolated=effectiveReps>STANDARD_MAX_EFFECTIVE_REPS
+  const personal=!extrapolated && model?.method==='individual_exponential'
   const k=personal?model.k:null
   const value=personal?weight*Math.exp(k*(effectiveReps-10)):weight*(30+effectiveReps)/40
   if(!Number.isFinite(value)||value<=0)return null
   return {value,weight,reps,rir:effort.rir,rir_source:effort.source,effective_reps:effectiveReps,
     method:personal?'individual_exponential':'epley',formula:personal?PERSONAL_FORMULA:BASELINE_FORMULA,
-    ...(personal?{k}:{}),model_version:E10RM_VERSION}
+    ...(personal?{k}:{}),range_quality:extrapolated?'high_rep_extrapolation':'standard',
+    pr_eligible:!extrapolated,model_version:E10RM_VERSION}
 }
 // Use the first eligible, explicitly rated work set in each workout for calibration.
 // This avoids treating ordinary within-session fatigue as a repetition/load relationship.
@@ -39,7 +45,7 @@ function calibrationRows(workouts, exerciseId, days=84) {
       if(String(entry.id)!==String(exerciseId))continue
       const first=(entry.sets||[]).find(s=>{
         const e=estimateSet(s)
-        return s?.done===true && e && e.rir_source!=='assumed_zero' && !s.sides
+        return s?.done===true && e?.pr_eligible && e.rir_source!=='assumed_zero' && !s.sides
       })
       if(first){const e=estimateSet(first);out.push({t:(dateMs(w.d)-latest)/DAY/7,x:e.effective_reps-10,y:Math.log(e.weight),date:w.d,id:w.id});break}
     }
@@ -93,7 +99,7 @@ export function strengthProgress(workouts, exerciseId) {
         for(const side of s?.sides?[s.sides.L,s.sides.R]:[s]){
           if(side?.done!==true)continue
           const result=estimateSet({...side,warmup:s?.warmup||s?.warmUp||s?.phase==='warmup'},model)
-          if(result && (!best || result.value>best.value))best={...result,set_index:index,workout_id:w.id||null,date:w.d}
+          if(result?.pr_eligible && (!best || result.value>best.value))best={...result,set_index:index,workout_id:w.id||null,date:w.d}
         }
       }
     }
@@ -106,14 +112,24 @@ export function strengthProgress(workouts, exerciseId) {
 }
 export function explainEstimate(result, model, language='en', unit='kg') {
   if(!result)return ''
-  const de=language.toLowerCase().startsWith('de'),personal=result.method==='individual_exponential'
+  const de=language.toLowerCase().startsWith('de')
+  const personal=result.method==='individual_exponential'
+  const extrapolated=result.range_quality==='high_rep_extrapolation'
   const assumption=result.rir_source==='assumed_zero'
-  if(de)return `Aus ${result.weight} ${unit} × ${result.reps} Wiederholungen${assumption?' (RIR nicht erfasst; für die Rechnung 0 angenommen)':` bei RIR ${result.rir}`} ergibt sich ein geschätztes 10RM von ${result.value.toFixed(1)} kg. `+
-    (personal?`Die individuelle Wiederholungskurve wurde aus ${model.sample_count} bewerteten Sätzen in ${model.workout_count} Trainingseinheiten der letzten ${model.window_days} Tage berechnet. Sie sagte spätere Sätze in der zeitlichen Validierung besser voraus als die Standardformel (Steigung k=${model.k.toFixed(4)}). `:
-      `Es wird die Standardformel nach Epley verwendet${model?.status==='validation_not_better'?', weil deine bisherige individuelle Kurve spätere Sätze nicht besser vorhersagte':', weil noch nicht genügend vergleichbare historische Daten zur sicheren individuellen Kalibrierung vorliegen'}. `)+
-    `Das ist eine Schätzung, kein gemessenes 10RM. Formel: ${result.formula}.`
-  return `From ${result.weight} ${unit} × ${result.reps} reps${assumption?' (RIR not recorded; assumed zero for this calculation)':` at RIR ${result.rir}`}, the estimated 10RM is ${result.value.toFixed(1)} kg. `+
-    (personal?`An individual rep/load curve was fitted using ${model.sample_count} rated sets across ${model.workout_count} workouts in the last ${model.window_days} days and outperformed the baseline in chronological validation (k=${model.k.toFixed(4)}). `:
-      `The Epley baseline is used${model?.status==='validation_not_better'?' because personalized estimates did not predict subsequent sets better':' because there is not yet enough reliable, comparable history for personalization'}. `)+
-    `This is an estimate, not a measured 10RM. Formula: ${result.formula}.`
+  const input=de
+    ? 'Aus '+result.weight+' '+unit+' × '+result.reps+' Wiederholungen'+(assumption?' (RIR nicht erfasst; für die Rechnung 0 angenommen)':' bei RIR '+result.rir)+' ergibt sich ein geschätztes 10RM von '+result.value.toFixed(1)+' '+unit+'. '
+    : 'From '+result.weight+' '+unit+' × '+result.reps+' reps'+(assumption?' (RIR not recorded; assumed zero for this calculation)':' at RIR '+result.rir)+', the estimated 10RM is '+result.value.toFixed(1)+' '+unit+'. '
+  const selection=personal
+    ? (de
+      ? 'Die individuelle Wiederholungskurve wurde aus '+model.sample_count+' bewerteten Sätzen in '+model.workout_count+' Trainingseinheiten der letzten '+model.window_days+' Tage berechnet und sagte spätere Sätze besser voraus als die Standardformel (k='+model.k.toFixed(4)+'). '
+      : 'An individual curve fitted from '+model.sample_count+' rated sets across '+model.workout_count+' workouts in the last '+model.window_days+' days outperformed the baseline in chronological validation (k='+model.k.toFixed(4)+'). ')
+    : (extrapolated && model?.method==='individual_exponential'
+      ? (de?'Außerhalb des validierten Wiederholungsbereichs wird statt der individuellen Kurve die Epley-Standardformel verwendet. ':'Outside the validated rep range, the Epley baseline is used instead of the individual curve. ')
+      : (de
+        ? 'Es wird die Epley-Standardformel verwendet'+(model?.status==='validation_not_better'?', weil die individuelle Kurve spätere Sätze nicht besser vorhersagte':', weil noch nicht genügend vergleichbare historische Daten zur individuellen Kalibrierung vorliegen')+'. '
+        : 'The Epley baseline is used'+(model?.status==='validation_not_better'?' because personalization did not predict subsequent sets better':' because there is not yet enough comparable history for personalization')+'. '))
+  const warning=extrapolated
+    ? (de?'Mehr als 15 effektive Wiederholungen: unsichere Extrapolation, nicht für Bestleistungen oder den Kraftverlauf berücksichtigt. ':'More than 15 effective reps: lower-confidence extrapolation, excluded from strength PRs and trends. ')
+    : ''
+  return input+selection+warning+(de?'Das ist eine Schätzung, kein gemessenes 10RM. Formel: ':'This is an estimate, not a measured 10RM. Formula: ')+result.formula+'.'
 }
