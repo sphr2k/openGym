@@ -2,6 +2,7 @@
 // OpenGym's stats map; no muscle mapping or physiological recovery model here.
 import { MUSCLES, hasExplicitMuscleMetadata, musclesOf } from '../../frontend/src/lib/muscles.js'
 import { exOr } from '../../frontend/src/lib/exercises.js'
+import { creditsStrengthSets } from '../../frontend/src/lib/exercise-muscle-overrides.js'
 import { hasCompletedWork, isWarmupRow } from '../../frontend/src/lib/workout-model.js'
 
 const round = n => Math.round(n * 100) / 100
@@ -21,7 +22,10 @@ export function workoutMuscleProfiles(rawEntries, S) {
     else if (!builtIn.missing) { source = builtIn; provenance = 'catalogue' }
     else if (e.muscleSnapshot && typeof e.muscleSnapshot === 'object') { source = e; provenance = 'history_snapshot' }
     else { source = e; provenance = 'history_bodypart_fallback' }
-    const weights = sortedWeights(musclesOf(source))
+    const excludedNonStrength = !creditsStrengthSets(source) || (!builtIn.missing && !creditsStrengthSets(builtIn))
+    // Keep real timestamps; avoid attributing hypertrophy or fatigue to stretching,
+    // mobility, cardio, etc. in the shared MCP effective-set model.
+    const weights = excludedNonStrength ? {} : sortedWeights(musclesOf(source))
     const chosen = provenance === 'history_snapshot' ? (e.muscleSnapshot || e) : source
     const explicit = hasExplicitMuscleMetadata(chosen) || (chosen?.muscleWeights && typeof chosen.muscleWeights === 'object' && !Array.isArray(chosen.muscleWeights))
     const muscles = Object.keys(weights)
@@ -31,7 +35,7 @@ export function workoutMuscleProfiles(rawEntries, S) {
       muscle_weights: weights,
       primary_muscles: muscles.filter(m => weights[m] >= 0.75),
       secondary_muscles: muscles.filter(m => weights[m] < 0.75),
-      muscle_source: explicit ? provenance : (muscles.length ? 'body_part_fallback' : 'unmapped'),
+      muscle_source: excludedNonStrength ? 'excluded_non_strength' : explicit ? provenance : (muscles.length ? 'body_part_fallback' : 'unmapped'),
     }
   })
 }
@@ -62,7 +66,7 @@ export function addMuscleOverlap(timeline, rawEntries, profiles) {
       continue
     }
     if (!groups.length) {
-      e.muscle_overlap_unavailable = 'unmapped_exercise'
+      e.muscle_overlap_unavailable = profile.muscle_source === 'excluded_non_strength' ? 'excluded_non_strength' : 'unmapped_exercise'
       continue
     }
     if (!validWork) {

@@ -53,6 +53,19 @@ describe('OpenGym muscle-metadata based set overlap',()=>{
     expect(t[2].intervening_muscle_load).toEqual({})
   })
 
+  test('mobility activities remain on timeline but do not imply hypertrophy or inter-set fatigue',()=>{
+    const entries = [
+      {id:'0576',sets:[log(12,120),log(10,360)]},
+      {id:'1167',sets:[log(20,240)]},
+    ]
+    const {profiles,timeline:t,model} = run(entries,[[0,0,120],[1,0,240],[0,1,360]])
+    expect(profiles[1]).toMatchObject({muscle_source:'excluded_non_strength',muscle_weights:{}})
+    expect(t[1].muscle_overlap_unavailable).toBe('excluded_non_strength')
+    expect(t[2].intervening_overlapping_set_count).toBe(0)
+    expect(t[2].intervening_muscle_load).toEqual({})
+    expect(model.mapped_work_set_count).toBe(2)
+  })
+
   test('a leg press interleaved with rowing is not automatically classified as shared local muscle load',()=>{
     const entries=[{id:'2267',sets:[log(17,120),log(15,360)]},{id:'2661',sets:[log(16,240)]}]
     const {timeline:t} = run(entries,[[0,0,120],[1,0,240],[0,1,360]])
