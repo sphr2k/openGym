@@ -57,3 +57,10 @@ cloudflare/dist-staging/
 
 # Generated Cloudflare CLI build output and account cache
 .cloudflare/
+# SwiftPM build output of the WatchCore package
+frontend/ios/App/WatchCore/.build/
+
+# Cloudflare fallback build (cloudflare/build.sh)
+/dist/
+.wrangler/
+.taste-skill/
