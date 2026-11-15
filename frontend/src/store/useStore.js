@@ -356,6 +356,7 @@ const detectedLang = () => {
 // merged under a saved copy it would claim that every existing profile never chose.
 export function freshState() {
   const s = clone(DEF)
+  s.effort = 'rir'
   s.lang = detectedLang()
   s.langAuto = true
   s.weighIn = false

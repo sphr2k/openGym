@@ -632,6 +632,10 @@ export default function Settings({ page = null, find = null, via = null, entryKe
             options={[{ value: 'none', label: t('Off') }, { value: 'rir', label: t('RIR') }, { value: 'rpe', label: t('RPE') }]}
             value={effortOf(S)} onChange={v => update(s => { s.effort = v; delete s.showRir })} />
         </Row>}
+        {on('effort') && effortOf(S) === 'rir' && <Row icon="gauge" iconTint="var(--purple)" title={t('Default to RIR 0')}>
+          <Switch aria-label={t('Default to RIR 0')} checked={S.defaultRir !== false}
+            onChange={v => update(s => { s.defaultRir = v })} />
+        </Row>}
         {/* The line under each exercise that the rows are held against (#173). Tapping the line in
             a workout switches it too; this is where the choice can be found without knowing that. */}
         <SelectRow icon="history" iconTint="var(--blue)" title={t('Shown under each exercise')}

@@ -54,9 +54,9 @@ describe('record kinds', () => {
     expect(sessionPrs(S, [entry]).prs).toEqual([BENCH])
     expect(isWeightPr(S, BENCH, 82.5)).toBe(true)
     expect(entryRecords(entry, b)[0]).toContain('weight')
-    // Same weight, more reps: the summary's e1RM line, and the set's e1RM trophy.
+    // Same weight, more reps: the finish summary now uses e10RM rather than a separate e1RM PR.
     const more = { id: BENCH, sets: [set(80, 6)] }
-    expect(sessionPrs(S, [more])).toMatchObject({ prs: [], e1prs: [{ id: BENCH }] })
+    expect(sessionPrs(S, [more])).toMatchObject({ prs: [BENCH], e1prs: [] })
     expect(entryRecords(more, b)[0]).toContain('e1rm')
   })
   it('on an assistance machine less help is the record, and it has no 1RM or volume', () => {

@@ -1,3 +1,4 @@
+import { strengthProgress, BASELINE_FORMULA, explainEstimate } from '../../shared/strength/e10rm.ts'
 /* The read-only tools. Each handler returns JSON; labels.js pre-substitutes any
    {0}/{1} template the lib returns so the LLM gets final text, not template strings.
    ISO dates are validated on the way in; the handlers never see 'yesterday'. */
@@ -10,7 +11,7 @@ import {
   fmt, setLabel, exLine, muscleName, policyName, friendlyDuration, ratio, muscleOrder
 } from './labels.js'
 import {
-  modeOf, workoutVolume, setsDone, setUnitsTotal, effectiveRoutine, effectiveRoutineIds, lastEntryFor, workoutAt
+  isBw, modeOf, workoutVolume, setsDone, setUnitsTotal, effectiveRoutine, effectiveRoutineIds, lastEntryFor, workoutAt
 } from '../../frontend/src/lib/history.js'
 import { queueView, queueNext, pinState } from '../../frontend/src/lib/queue.js'
 import { exOr, registerCustom, allExercises, searchScore, CATEGORIES } from '../../frontend/src/lib/exercises.js'
@@ -366,6 +367,25 @@ const snapshotFields = (w, status) => status === 'in_progress'
      synced_at: new Date(w.synced_at).toISOString(),
      stale: Date.now() - w.synced_at > LIVE_STALE_MS}
   : {}
+
+/** Estimated 10RM from raw sets, with formula and model provenance. */
+export const getStrengthProgress = {
+  name: 'get_strength_progress',
+  description: 'Show estimated 10RM, recent trend and all-time PR for an exercise, using the same pure strength model as the app. Includes the formula, RIR assumptions and historical calibration evidence. This replaces e1RM as the preferred strength-progress measure.',
+  schema: { exercise_id: z.string().min(1).describe('Exercise id from a routine or get_workout') },
+  handler: ({ exercise_id }) => {
+    const S=getState()
+    if (!S) return noState()
+    const ex=exerciseOf(exercise_id,S)
+    const sample=(S.workouts || []).flatMap(w=>w.entries||[]).find(e=>String(e.id)===String(exercise_id))
+    if(isAssisted(exercise_id)||sample?.target?.assisted||isBw({ ...sample?.target,id:exercise_id }))
+      return {exercise_id,error:'bodyweight/assisted exercises are not comparable by stack load'}
+    const result=strengthProgress(S.workouts || [],exercise_id)
+    return {...result,exercise_name:ex.n || exercise_id,unit:S.unit || 'kg',
+      explanation:result.all_time_pr?explainEstimate(result.all_time_pr,result.model,'en',S.unit || 'kg'):null,
+      baseline_formula:BASELINE_FORMULA}
+  }
+}
 
 /** list_workouts — newest-first summary of recent sessions. */
 export const listWorkouts = {
@@ -927,6 +947,7 @@ export const searchExercises = {
 }
 
 export const TOOLS = [
+  getStrengthProgress,
   listRoutines, getRoutine, previewSession, getWeekPlan, listWorkouts, getWorkout, getBodyweight, estimate1rm, muscleBalance, getProgramme, searchExercises
 ]
 
