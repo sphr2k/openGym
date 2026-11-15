@@ -33,6 +33,9 @@ describe('Brazilian Portuguese locale', () => {
     const stray = Object.keys(PT_BR_OVERRIDES).filter(key => !(key in pt))
     expect(stray, 'override keys that are not pt-PT keys').toEqual([])
     expect(Object.keys(PT_BR_OVERRIDES).length + inherited.length).toBe(Object.keys(pt).length)
+    // New e10RM terms are intentionally inherited: both are equally idiomatic in pt-PT and pt-BR.
+    expect(ptBR.Extrapolated).toBe('Extrapolado')
+    expect(ptBR['How was this 10RM estimated?']).toBe('Como foi estimado este 10RM?')
     // …and each one really reaches the pack, whatever the spread order does.
     for (const [key, value] of Object.entries(PT_BR_OVERRIDES)) expect(ptBR[key], key).toBe(value)
 
@@ -41,7 +44,7 @@ describe('Brazilian Portuguese locale', () => {
     // has to be taught is a number nobody reads. What the numbers stood for is asserted above.
     // If the hash fails, review the changed keys and wording before accepting a new one. From
     // frontend/: node scripts/pt-br-inheritance-fingerprint.mjs --list
-    expect(fingerprint, 'pt-PT inheritance changed; review the inherited pt-BR wording').toBe('5268d3a4b81d4296f467918e24899038aee7b81a024949535f9ecdbcd3d68202')
+    expect(fingerprint, 'pt-PT inheritance changed; review the inherited pt-BR wording').toBe('b932b339f542b9801328e7e06550f043a8b06c3fb7e8af8e677aeecf88a2c0bb')
   })
 
   // pt-PT labelled Unpair 'Desfazer': Undo, in Portuguese (it is pt-BR's Undo), on the button that
