@@ -1,3 +1,5 @@
+import { best10RM } from '../lib/tenrm.js'
+import { withDefaultRir } from '../lib/default-rir.js'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
@@ -1065,6 +1067,10 @@ function ExerciseBlock({ entryIdx, compact, listed, dense, editing, onToggle, on
             onToggle={id => mutSet(i, row => toggleSetBand(row, id))} />}
           {/* The trophy a set earned, and how close the next one is (lib/set-records.js), under its plates. */}
           {!pairTail && recordLine(i)}
+          {!pairTail && (() => {
+            const est = best10RM({ ...entry, sets: [s] })
+            return est == null ? null : <div className="small dim" style={{ padding: '2px 12px 6px', fontVariantNumeric: 'tabular-nums' }}>≈ 10RM {fmtNum(est)} {S.unit}</div>
+          })()}
           {/* The set's own note (lib/set-notes.js): a quiet line under the row, a tap edits it. */}
           {!pairTail && setNoteOf(s) && <button type="button" className="setnote-line" aria-label={t('Edit note') + ': ' + setNoteOf(s)}
             onClick={() => setNoteSheet(entryIdx, i, isWarmupRow(s) ? t('Warm-up') : t('Set {0}', setNumOf(s, i)))}>
@@ -2238,6 +2244,11 @@ function ActiveWorkout() {
       // recomputed by toggleSide, so every completion check below still reads a single boolean.
       if (side) e.sets[i] = toggleSide(e.sets[i], side)
       else e.sets[i].done = !e.sets[i].done
+      if (!editing) {
+        const row = e.sets[i]
+        if (side) row.sides[side] = withDefaultRir(s, e, row, row.sides[side])
+        else e.sets[i] = withDefaultRir(s, e, row)
+      }
       checked = e.sets[i].done
       // When the work happened, for the session's end (lib/finish-workout.js sessionEnd).
       if (!editing && (side ? e.sets[i].sides[side].done : checked)) e.sets[i].at = Date.now()

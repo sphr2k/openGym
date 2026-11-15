@@ -4006,3 +4006,22 @@ describe('a set\'s own form video (v1.4.4)', () => {
   })
 })
 
+
+
+describe('RIR default and estimated 10RM', () => {
+  it('logs RIR 0 when ticking new work and shows its estimated 10RM', async () => {
+    await mount([exercise('plain-bench', [false, false])], 0, { effort: 'rir', defaultRir: true })
+    const row = mocks.S.active.entries[0].sets[0]
+    const estimate = row.w * (30 + row.r) / 40
+    await toggleSet(0)
+    expect(mocks.S.active.entries[0].sets[0].rir).toBe(0)
+    await act(async () => { root.render(React.createElement(Workout)) })
+    expect(container.textContent).toContain('≈ 10RM')
+    expect(container.textContent).toContain(String(estimate))
+  })
+  it('allows switching off the default and keeps explicit ratings', async () => {
+    await mount([exercise('plain-bench', [false, false])], 0, { effort: 'rir', defaultRir: false })
+    await toggleSet(0)
+    expect(mocks.S.active.entries[0].sets[0].rir).toBeUndefined()
+  })
+})

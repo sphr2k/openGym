@@ -1,4 +1,5 @@
 export default {
+  "Default to RIR 0": "預設 RIR 0",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "手錶",
   "Set once": "設定一次",

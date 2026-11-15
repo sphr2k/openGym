@@ -87,3 +87,11 @@ test("cross-origin browser attempts to redeem a pairing code are denied",async()
   assert.equal(response.status,403);
   assert.equal((await response.json()).code,"origin-mismatch");
 });
+
+test("production preserves the existing personal account, profile and media identities",()=>{
+  const production=cfConfig({mode:"production",isPreview:false}).worker;
+  const legacy=cfConfig({mode:"staging",isPreview:false}).worker;
+  assert.deepEqual(production,legacy);
+  assert.equal(production.assets.runWorkerFirst,true);
+  assert.equal(production.env.MCP_HOSTNAME.value,"opengym-mcp.janw.eu");
+});

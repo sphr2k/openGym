@@ -1,3 +1,4 @@
+import { workoutRecords } from './tenrm.js'
 // A session described rather than tapped through ("dumbbell curls, 12 kg, 12/12/10") turned into
 // the workout the app would have saved had it been logged on the phone. Written for the MCP
 // server's log_workout tool, which hands it a structured description an LLM read out of what the
@@ -13,7 +14,7 @@
 // problem to put to the user instead of a workout filed under the wrong lift.
 import { EXIDX, canonicalExId, betterWeight, beatsWeight, isCardio } from './exercises.js'
 import { exerciseCandidates, importId, bpFromName } from './import-csv.js'
-import { bestWeightFor, bestWeightForEntry, workoutVolume, EFFORT } from './history.js'
+import { bestWeightForEntry, workoutVolume, EFFORT } from './history.js'
 import { buildCompletedWorkout } from './finish-workout.js'
 import { withMeaning, entryDbLoad } from './dumbbells.js'
 import { isWarmupRow } from './workout-model.js'
@@ -364,12 +365,7 @@ export function appendLoggedWorkout(S, built, { now = Date.now(), allowDuplicate
     const touched = [...new Set(w.entries.map(e => e.id))]
     S.workouts = rebuildPrHistory(insertChronological(S.workouts, w), touched, w)
   } else {
-    w.prs = []
-    w.entries.forEach(e => {
-      const loads = e.sets.filter(s => s.done && !isWarmupRow(s)).map(s => s.w).filter(x => x > 0)
-      const mx = loads.length ? loads.reduce((a, b) => betterWeight(e.id, a, b)) : 0
-      if (beatsWeight(e.id, mx, bestWeightFor(S, e.id, entryDbLoad(e)))) w.prs.push(e.id)
-    })
+    w.prs = workoutRecords(S, w.entries)
     S.exWeights = S.exWeights && typeof S.exWeights === 'object' ? S.exWeights : {}
     w.entries.forEach(e => {
       const mx = bestWeightForEntry(e)

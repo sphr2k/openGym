@@ -1,3 +1,4 @@
+import { workoutRecords } from './tenrm.js'
 // Moving a workout that is already in history to another date or start time.
 //
 // Nothing about what was lifted changes here: the sets, the volume and the notes are the
@@ -8,8 +9,6 @@
 // Kept pure and separate from backfill.js (which is about logging a session that never
 // existed) so the date arithmetic and the badge surgery are testable without the UI.
 import { insertChronological, backfillStart } from './backfill.js'
-import { bestWeightForEntry } from './history.js'
-import { beatsWeight } from './exercises.js'
 import { stampWorkout } from './sync-merge.js'
 
 // Before ids existed a workout was keyed for sync by its day and start time
@@ -60,24 +59,14 @@ export function retimeWorkout(w, iso, time) {
 export function rebuildPrHistory(workouts, exerciseIds, moved = null) {
   const ids = new Set(exerciseIds || [])
   if (!ids.size) return workouts
-  const best = new Map()
+  const previous = []
   return workouts.map(w => {
     const had = w.prs || []
-    const kept = []
-    let trains = false
-    for (const e of w.entries || []) {
-      if (!ids.has(e.id)) continue
-      trains = true
-      const top = bestWeightForEntry(e)
-      // Leads everything dated before it. The running best grows whether or not a badge is
-      // written, so a session that cannot gain one still raises the bar for the next. "Leads"
-      // is the finish sheet's own test (beatsWeight): on an assistance machine the record is the
-      // least help, so there a lighter load leads (issue #232).
-      const leads = beatsWeight(e.id, top, best.get(e.id) || 0)
-      if (leads) best.set(e.id, top)
-      if (leads && (w === moved || had.includes(e.id))) kept.push(e.id)
-    }
-    if (!trains) return w
+    const entries = (w.entries || []).filter(e => ids.has(e.id))
+    const leading = workoutRecords({ workouts: previous }, entries)
+    previous.push(w)
+    if (!entries.length) return w
+    const kept = leading.filter(id => w === moved || had.includes(id))
     const prs = [...new Set([...had.filter(id => !ids.has(id)), ...kept])]
     if (prs.length === had.length && prs.every((id, i) => id === had[i])) return w
     return { ...w, prs }

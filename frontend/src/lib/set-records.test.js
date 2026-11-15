@@ -49,14 +49,14 @@ describe('record kinds', () => {
   it('a load never lifted before is a weight record, not a rep record', () => {
     expect(recordKindsOf(set(90, 1), b)).toEqual(['weight'])
   })
-  it('agrees with the finish summary about load PRs', () => {
+  it('keeps labelled load trophies distinct from the summary’s 10RM PRs', () => {
     const entry = { id: BENCH, sets: [set(82.5, 3)] }
-    expect(sessionPrs(S, [entry]).prs).toEqual([BENCH])
+    expect(sessionPrs(S, [entry]).prs).toEqual([])
     expect(isWeightPr(S, BENCH, 82.5)).toBe(true)
     expect(entryRecords(entry, b)[0]).toContain('weight')
-    // Same weight, more reps: the summary's e1RM line, and the set's e1RM trophy.
+    // More reps earn a primary 10RM PR alongside the set's labelled 1RM trophy.
     const more = { id: BENCH, sets: [set(80, 6)] }
-    expect(sessionPrs(S, [more])).toMatchObject({ prs: [], e1prs: [{ id: BENCH }] })
+    expect(sessionPrs(S, [more])).toMatchObject({ prs: [BENCH], e1prs: [] })
     expect(entryRecords(more, b)[0]).toContain('e1rm')
   })
   it('on an assistance machine less help is the record, and it has no 1RM or volume', () => {

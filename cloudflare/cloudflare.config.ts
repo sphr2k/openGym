@@ -1,10 +1,11 @@
 import { bindings, defineConfig, exports } from "cf/config";
 
-// Keep the original default Worker independent from the guarded staging
-// target. Explicit --mode staging is required for the owner's cutover.
+// Production is the existing personal deployment. Its legacy resource names
+// are durable identities, not labels: changing them would create empty storage.
+// Keep `staging` as an alias for existing Workers Builds jobs until updated.
 export default defineConfig(({ mode }) => {
-  const staging = mode === "staging";
-  const name = staging ? "opengym-cloudflare-staging" : "opengym-cloudflare";
+  const production = mode === "production" || mode === "staging";
+  const name = production ? "opengym-cloudflare-staging" : "opengym-cloudflare";
   return {
     worker: {
       name,
@@ -12,7 +13,7 @@ export default defineConfig(({ mode }) => {
       compatibilityFlags: ["nodejs_compat"],
       entrypoint: "./src/index.js",
       observability: { enabled: true },
-      assets: { runWorkerFirst: staging ? true : ["/api/*"] },
+      assets: { runWorkerFirst: production ? true : ["/api/*"] },
       // Existing classes in both runtimes are backed by SQLite. These
       // declarations preserve class names and existing DO namespaces.
       exports: {
@@ -22,9 +23,9 @@ export default defineConfig(({ mode }) => {
       env: {
         ALLOW_GUEST: bindings.text("true"),
         FIRST_USER_ADMIN: bindings.text("false"),
-        ...(staging ? { MCP_HOSTNAME: bindings.text("opengym-mcp.janw.eu") } : {}),
+        ...(production ? { MCP_HOSTNAME: bindings.text("opengym-mcp.janw.eu") } : {}),
         MEDIA: bindings.r2({
-          name: staging ? "opengym-cloudflare-staging-media" : "opengym-media",
+          name: production ? "opengym-cloudflare-staging-media" : "opengym-media",
         }),
         ACCOUNTS: bindings.durableObject({ worker: name, exportName: "AccountDO" }),
         PROFILES: bindings.durableObject({ worker: name, exportName: "ProfileDO" }),

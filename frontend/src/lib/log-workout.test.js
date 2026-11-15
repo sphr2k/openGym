@@ -191,10 +191,10 @@ describe('the same call twice is one workout', () => {
 })
 
 describe('filed the way Finish files it', () => {
-  it('today: a heavier top set than history is a PR, and becomes the confirmed weight', () => {
+  it('today: a heavier load with lower estimated 10RM only updates the confirmed weight', () => {
     const S = profile({ workouts: [bench('2026-10-13', 100, ['0025'])], exWeights: { '0025': { w: 100, d: '2026-10-13' } } })
     const r = appendLoggedWorkout(S, build(S, { date: TODAY, exercises: [{ exercise: '0025', sets: [{ reps: 3, weight: 105 }] }] }), { now: NOW })
-    expect(r.workout.prs).toEqual(['0025'])
+    expect(r.workout.prs).toEqual([])
     expect(S.exWeights['0025']).toEqual({ w: 105, d: TODAY })
     expect(S._ts).toBeGreaterThanOrEqual(NOW)
   })

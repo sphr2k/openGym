@@ -165,12 +165,11 @@ export const DEF = {
   // One-time hints already shown to this profile, synced so each shows once per person rather
   // than once per device: { swipeSets: true } after the first swipe-on-sets nudge (Workout.jsx).
   hints: {},
-  // effort: which per-set effort scale is logged — 'none' | 'rir' | 'rpe'. null, not 'none', so
-  // that a profile which never chose (loaded state is overlaid on DEF, on every path: local,
-  // server pull, backup import) still falls back to the `showRir` boolean this replaced and
-  // keeps the column it had. See effortOf.
+  // New profiles log RIR, with 0 filled in when a work set is completed.
+  // Explicit saved effort choices still override these defaults. Legacy null
+  // choices are resolved by effortOf, including the old showRir flag.
   // nudge/tone: the missed-workout nudge (lib/nudge.js), opt-in, rides on the reminder.
-  reminder: { on: false, time: '08:00', tz: null, nudge: false, tone: 'friendly' }, effort: null, autoBackup: false,
+  reminder: { on: false, time: '08:00', tz: null, nudge: false, tone: 'friendly' }, effort: 'rir', defaultRir: true, autoBackup: false,
   // Equipment profiles (issue: filter Library/picker/routines by what you actually own —
   // e.g. "Home" vs "Gym" — building on the session-only equipment filter from issue #6).
   // Since 1.4.4 (#808) each profile is a gym and also keeps that gym's plates, dumbbells, bars and

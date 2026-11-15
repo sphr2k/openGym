@@ -1,5 +1,6 @@
 // Vietnamese UI strings. Generated for openGym.
 export default {
+  "Default to RIR 0": "Mặc định RIR 0",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Đồng hồ",
   "Set once": "Đặt một lần",

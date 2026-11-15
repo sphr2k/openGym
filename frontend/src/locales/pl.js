@@ -1,5 +1,6 @@
 // Polish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  "Default to RIR 0": "Domyślnie RIR 0",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Zegarki",
   "Set once": "Ustaw raz",

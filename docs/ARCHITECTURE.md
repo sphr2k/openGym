@@ -85,6 +85,15 @@ flowchart TB
 - **Platform switches.** `lib/mobile.js` (`MOBILE`), `lib/channel.js` (APK or store build) and the
   `VITE_DEMO` flag for the demo. Native code is only reached through Capacitor plugins.
 
+### Primary records in the personal fork
+
+Workout PR badges use a shared estimated 10RM reader at finish and when history
+is corrected. Its estimator is fixed, independent of the profile's 1RM-chart
+formula: changing a chart preference should not change which workouts earned
+primary records. Upstream's separately labelled load, rep, 1RM and volume
+set trophies retain their own meanings. Effort defaults apply only to new
+completion events; missing historical effort remains unlogged.
+
 ## Sync
 
 Each profile is one JSON document with a server revision. A device sends the revision it last
