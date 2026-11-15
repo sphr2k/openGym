@@ -238,3 +238,19 @@ test('nutrition: reads openNutrition\'s own summary.v1 names (energy, carbohydra
     { date: '2026-10-05', kcal: 2512, protein: 171, carbs: 280, fat: null, target: { kcal: 2600, protein: 170 }, logged: true, proteinMeals: 4 });
   assert.equal(cleanDay({ date: '2026-10-05', kcal: null }).kcal, null);
 });
+
+test('correcting a saved workout drops its stale volume cache', () => {
+  const S = { workouts: [{ id: 'edited', d: '2026-11-15', vol: 300, entries: [{ id: 'bench', sets: [{ w: 60, r: 5, done: true }] }] }] };
+  applyOps(S, cleanOps([{ op: 'workout.edit', id: 'edited', sets: [{ e: 0, s: 0, ex: 'bench', w: 100 }] }]), { t: 100 });
+  assert.equal(S.workouts[0].entries[0].sets[0].w, 100);
+  assert.equal(S.workouts[0].vol, undefined);
+});
+
+test('routine removal fingerprints every weekday its inverse restores', () => {
+  const S = { routines: [{ id: 'r1', name: 'Push', ex: [] }, { id: 'r2', name: 'Pull', ex: [] }], week: { 1: 'r1', 3: ['r1', 'r2'] } };
+  const [rec] = applyOps(S, cleanOps([{ op: 'routine.remove', id: 'r1' }]), { t: 100 });
+  for (const key of ['1', '3']) assert.ok(rec.touched.some(x => x.list === 'week' && x.key === key));
+  const before = fingerprintOf(S, rec.touched);
+  S.week[1] = 'r2';
+  assert.notEqual(fingerprintOf(S, rec.touched), before);
+});

@@ -218,6 +218,7 @@ export function applyOps(S, ops, { by, t, rand = crypto.randomBytes } = {}) {
           const ids = [].concat(v || []);
           if (!ids.includes(o.id)) continue;
           rec.inverse.push({ list: 'week', key: day, value: clone(v) });
+          rec.touched.push({ list: 'week', key: day });
           setWeek(S, day, ids.filter(x => x !== o.id), t);
         }
         putEntry(S, 'routines', o.id, null, t);
@@ -287,6 +288,9 @@ export function applyOps(S, ops, { by, t, rand = crypto.randomBytes } = {}) {
           if (x.r != null) target.r = x.r;
           if (x.done != null) target.done = x.done;
         }
+        // Readers can recompute from the corrected sets, including the client's
+        // drop-set and load conventions; the old derived cache is no longer valid.
+        delete w.vol;
         if (o.name) w.name = o.name;
         if (label) w._edit = label;
         rec.inverse.push({ list: 'workouts', key: o.id, value: before });
