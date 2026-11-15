@@ -1,3 +1,4 @@
+import { workoutRecords } from './tenrm.js'
 // The persisted boundary for a finished session. Keep this pure so compatibility tests can
 // exercise the exact shape the UI writes without mounting React or mutating store state.
 import { stopAt, pauseSpans, pausedBetween } from './workout-pause.js'
@@ -103,17 +104,8 @@ export const isWeightPr = (H, exId, w, as = 'as') => beatsWeight(exId, Number(w)
 
 // `prs`: the exercises whose top load is a PR. `e1prs`: a heavier estimate without a heavier top
 // set (same weight, more reps), reported apart so it can't be read as a load PR.
-export function sessionPrs(H, entries, { formula } = {}) {
-  const prs = []
-  const e1prs = []
-  ;(entries || []).forEach(e => {
-    const loads = (e.sets || []).filter(s => s.done && !isWarmupRow(s)).map(s => s.w).filter(w => w > 0)
-    const mx = loads.length ? loads.reduce((a, b) => betterWeight(e.id, a, b)) : 0
-    if (isWeightPr(H, e.id, mx, entryDbLoad(e))) prs.push(e.id)
-    const rec = formula ? is1RMRecord(H, e.id, e, formula) : is1RMRecord(H, e.id, e)
-    if (rec && !prs.includes(e.id)) e1prs.push({ id: e.id, ...rec })
-  })
-  return { prs, e1prs }
+export function sessionPrs(H, entries) {
+  return { prs: workoutRecords(H, entries), e1prs: [] }
 }
 
 // `brandFor(exId)`: the machine brand an exercise kept per gym was done on (#988, lib/gym-split.js),

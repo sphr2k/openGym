@@ -35,6 +35,7 @@ COPY frontend/package.json /app/frontend/package.json
 COPY frontend/src/lib/ /app/frontend/src/lib/
 COPY api/package.json /app/api/package.json
 COPY api/coach/core/ /app/api/coach/core/
+COPY shared/strength/ /app/shared/strength/
 COPY mcp/src/ ./src/
 
 ENV NODE_ENV=production

@@ -1,5 +1,8 @@
 // Hindi UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "सीमा से बाहर अनुमानित",
+  "How was this 10RM estimated?": "इस 10RM का अनुमान कैसे लगाया गया?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "घड़ियाँ",
   "Set once": "एक बार सेट करें",

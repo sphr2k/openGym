@@ -1,5 +1,8 @@
 // Indonesian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Diekstrapolasi",
+  "How was this 10RM estimated?": "Bagaimana perkiraan 10RM ini dihitung?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Jam tangan",
   "Set once": "Atur sekali",

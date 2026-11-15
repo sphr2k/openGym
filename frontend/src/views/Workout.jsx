@@ -1,3 +1,7 @@
+import { withDefaultRir } from '../lib/default-rir.js'
+import { historyAs } from '../lib/dumbbells.js'
+import { gymSplitView } from '../lib/gym-split.js'
+import { estimateSet, calibrate } from '../../../shared/strength/e10rm.ts'
 import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import SwipeCards from '../components/SwipeCards.jsx'
 import SwipeRow from '../components/SwipeRow.jsx'
@@ -41,7 +45,7 @@ import { durationSheet } from '../components/DurationWheel.jsx'
 import { REST_MAX, fmtRest, restWheelValue } from '../lib/duration.js'
 import { youtubeSearchUrl } from '../lib/youtube.js'
 import { openExternal } from '../components/CustomMedia.jsx'
-import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow, swapActiveWorkoutToBackup, setNoteSheet } from '../sheets.jsx'
+import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWorkout, exitWorkoutEdit, workoutCompleteSheet, confirmSheet, exerciseNoteSheet, sessionNoteSheet, renameWorkoutSheet, swapActiveWorkoutExercise, barWeightSheet, menuSheet, effortPickerSheet, exerciseHistorySheet, addRoutineToSessionSheet, finishWorkoutSheet, finishWorkoutNow, swapActiveWorkoutToBackup, setNoteSheet, e10rmInfoSheet } from '../sheets.jsx'
 import { afterScrollRestore, scrollRestorePending } from '../components/Modals.jsx'
 import { effortColor } from '../lib/effort.js'
 import Elapsed from '../components/Elapsed.jsx'
@@ -202,6 +206,8 @@ function ExerciseBlock({ entryIdx, compact, listed, dense, editing, onToggle, on
   const setFlash = useUI(s => (s.setFlash?.idx === entryIdx ? s.setFlash : null))
   const optsId = useId()
   const entry = S.active.entries[entryIdx]
+  const e10Model = calibrate(historyAs(gymSplitView(S, entry.id), entry.id, entryDbLoad(entry))?.workouts || [], entry.id)
+
   // The set whose form video plays under its row (SetVideo.jsx), by index; one at a time.
   const [videoAt, setVideoAt] = useState(null)
   // Rows are keyed by index: one added or removed above would put the player under another set.
@@ -1065,6 +1071,18 @@ function ExerciseBlock({ entryIdx, compact, listed, dense, editing, onToggle, on
             onToggle={id => mutSet(i, row => toggleSetBand(row, id))} />}
           {/* The trophy a set earned, and how close the next one is (lib/set-records.js), under its plates. */}
           {!pairTail && recordLine(i)}
+          {!pairTail && mode === 'reps' && !isWarmupRow(s) && !isAssisted(entry.id) && !isBw({ ...entry.target, id: entry.id }) && (() => {
+            const candidate = isSideSet(s) ? null : estimateSet(s, e10Model)
+            if (!s.done || !candidate) return null
+            return <div className="small dim" style={{ padding: '2px 12px 6px', fontVariantNumeric: 'tabular-nums' }}>
+              ≈ 10RM {fmtNum(candidate.value)} {S.unit}
+              {candidate.range_quality === 'high_rep_extrapolation' && <> · {t('Extrapolated')}</>}
+              {' '}<button type="button" className="subtle" aria-haspopup="dialog"
+                aria-label={t('How was this 10RM estimated?')}
+                style={{ cursor: 'pointer', textDecoration: 'underline dotted', padding: '3px 6px', minHeight: 32 }}
+                onClick={() => e10rmInfoSheet(candidate, e10Model, S.unit)}>ⓘ</button>
+            </div>
+          })()}
           {/* The set's own note (lib/set-notes.js): a quiet line under the row, a tap edits it. */}
           {!pairTail && setNoteOf(s) && <button type="button" className="setnote-line" aria-label={t('Edit note') + ': ' + setNoteOf(s)}
             onClick={() => setNoteSheet(entryIdx, i, isWarmupRow(s) ? t('Warm-up') : t('Set {0}', setNumOf(s, i)))}>
@@ -2238,6 +2256,11 @@ function ActiveWorkout() {
       // recomputed by toggleSide, so every completion check below still reads a single boolean.
       if (side) e.sets[i] = toggleSide(e.sets[i], side)
       else e.sets[i].done = !e.sets[i].done
+      if (!editing) {
+        const row = e.sets[i]
+        if (side) row.sides[side] = withDefaultRir(s, e, row, row.sides[side])
+        else e.sets[i] = withDefaultRir(s, e, row)
+      }
       checked = e.sets[i].done
       // When the work happened, for the session's end (lib/finish-workout.js sessionEnd).
       if (!editing && (side ? e.sets[i].sides[side].done : checked)) e.sets[i].at = Date.now()

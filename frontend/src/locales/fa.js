@@ -1,5 +1,8 @@
 // Persian UI strings. Keys are the English source strings.
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "برون‌یابی‌شده",
+  "How was this 10RM estimated?": "این 10RM چگونه برآورد شده است؟",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "ساعت‌ها",
   "Set once": "یک‌بار تنظیم",

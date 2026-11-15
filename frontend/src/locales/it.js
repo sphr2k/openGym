@@ -2,6 +2,9 @@
 export const metadata = { description: 'Diario personale di allenamento e peso corporeo' }
 
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Estrapolato",
+  "How was this 10RM estimated?": "Come è stato stimato questo 10RM?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Orologi",
   "Set once": "Da impostare una volta",

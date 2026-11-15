@@ -1,5 +1,8 @@
 // Simplified Chinese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "外推估算",
+  "How was this 10RM estimated?": "这个 10RM 是如何估算的？",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "手表",
   "Set once": "设置一次",

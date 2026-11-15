@@ -1,5 +1,8 @@
 // Thai UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "คาดคะเนนอกช่วงข้อมูล",
+  "How was this 10RM estimated?": "ค่า 10RM นี้ประเมินอย่างไร?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "นาฬิกา",
   "Set once": "ตั้งครั้งเดียว",

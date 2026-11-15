@@ -1,5 +1,8 @@
 // Vietnamese UI strings. Generated for openGym.
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Ngoại suy",
+  "How was this 10RM estimated?": "10RM này được ước tính như thế nào?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Đồng hồ",
   "Set once": "Đặt một lần",

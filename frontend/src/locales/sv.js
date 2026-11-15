@@ -1,5 +1,8 @@
 // Swedish UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Extrapolerat",
+  "How was this 10RM estimated?": "Hur uppskattades detta 10RM?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Klockor",
   "Set once": "Ställ in en gång",

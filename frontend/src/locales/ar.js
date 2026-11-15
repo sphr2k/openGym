@@ -1,5 +1,8 @@
 // Arabic UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "استقراء خارج النطاق",
+  "How was this 10RM estimated?": "كيف تم تقدير قيمة 10RM هذه؟",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "الساعات",
   "Set once": "تُضبط مرة واحدة",

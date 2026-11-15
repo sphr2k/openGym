@@ -1,5 +1,8 @@
 // Bengali UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "সীমার বাইরে অনুমিত",
+  "How was this 10RM estimated?": "এই 10RM কীভাবে অনুমান করা হয়েছে?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "ঘড়ি",
   "Set once": "একবার সেট করুন",

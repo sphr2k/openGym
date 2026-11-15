@@ -1,5 +1,8 @@
 // Hungarian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Extrapolált",
+  "How was this 10RM estimated?": "Hogyan becsültük ezt a 10RM-et?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Órák",
   "Set once": "Egyszer beállítandó",

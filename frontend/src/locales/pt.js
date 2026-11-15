@@ -1,5 +1,8 @@
 // Portuguese UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Extrapolado",
+  "How was this 10RM estimated?": "Como foi estimado este 10RM?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Relógios",
   "Set once": "Definir uma vez",

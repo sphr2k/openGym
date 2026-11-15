@@ -1,3 +1,4 @@
+import { explainEstimate } from '../../shared/strength/e10rm.ts'
 import { tempoSheet } from './components/Tempo.jsx'
 import { useCircuit } from './store/useCircuit.js'
 import { CircuitResults } from './components/CircuitCard.jsx'
@@ -145,6 +146,16 @@ const update = (...a) => useStore.getState().update(...a)
 const ui = () => useUI.getState()
 const toast = m => ui().toast(m)
 const snd = () => S().sound
+
+// Use the existing accessible, scrollable, viewport-constrained modal system rather
+// than an absolutely positioned popover that may be clipped by workout/swipe cards.
+export function e10rmInfoSheet(estimate, model, unit) {
+  return ui().openSheet(close => <div style={{ textAlign: 'left', lineHeight: 1.55 }}>
+    <h3 style={{ marginBottom: 12 }}>≈ 10RM {fmtNum(estimate.value)} {unit}</h3>
+    <p style={{ marginBottom: 18 }}>{explainEstimate(estimate, model, getLang(), unit)}</p>
+    <button type="button" className="btn primary" onClick={close}>{t('Close')}</button>
+  </div>, { kind: 'center', wide: true })
+}
 
 /* ============================ custom confirm dialog ============================ */
 // `noCancel`: one button only, for an explainer that must lead straight to the phone's own
