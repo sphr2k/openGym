@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { effortOf } from '../lib/history.js'
 // v1.3.11: "Weigh in before workouts" starts off for a profile created from nothing. A profile
 // that already exists keeps what it had: one saved with the switch on stays on, and one saved
 // before the setting existed (no key) still reads as on through DEF and `!== false`.
@@ -68,5 +69,21 @@ describe('starting over', () => {
     expect(S.weighIn).toBe(false)
     expect(S.gifSize).toBe('mini')
     expect(S.lang).toBe('de')
+  })
+})
+
+
+describe('RIR preference defaults', () => {
+  it('uses RIR with the zero default for new and restarted profiles', () => {
+    expect(freshState()).toMatchObject({ effort: 'rir', defaultRir: true })
+    expect(restartedState({})).toMatchObject({ effort: 'rir', defaultRir: true })
+  })
+  it('preserves legacy opt-outs and explicit effort choices when restoring or loading', () => {
+    for (const saved of [{ showRir: false }, { showRir: true }, { effort: 'none' }, { effort: 'rpe' }, { effort: 'rir' }]) {
+      const expected = effortOf(saved)
+      expect(effortOf({ ...structuredClone(DEF), ...saved })).toBe(expected)
+      const restored = restoredStateFor({ workouts: [] }, { ...saved, workouts: [{ id: 'old' }] })
+      expect(effortOf(restored)).toBe(expected)
+    }
   })
 })
