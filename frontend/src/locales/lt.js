@@ -1,5 +1,8 @@
 // Lithuanian UI strings. Keys are the English source strings (see lib/i18n.js).
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "Ekstrapoliuota",
+  "How was this 10RM estimated?": "Kaip apskaičiuotas šis 10RM įvertis?",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "Laikrodžiai",
   "Set once": "Nustatoma kartą",

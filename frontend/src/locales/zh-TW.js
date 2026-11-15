@@ -1,4 +1,7 @@
 export default {
+  // --- Shared e10RM engine (#46) ---
+  "Extrapolated": "外推估算",
+  "How was this 10RM estimated?": "這個 10RM 是如何估算的？",
   // --- Settings first screen in groups (#1105) ---
   "Watches": "手錶",
   "Set once": "設定一次",
