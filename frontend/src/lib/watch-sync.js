@@ -407,11 +407,12 @@ export function buildReady (S, today = todayISO()) {
 }
 
 // What one exercise trains, with the phone's own weights (helpers count 0.4): the watch adds up the
-// sets it logs into its Muscles page, offline too. loadOf of one set resolves the exercise as the phone's map does.
+// sets it logs into its Muscles page, offline too. Show anatomical involvement even
+// for cardio/mobility, but do not count these activities as hypertrophy effective sets.
 // Only the muscles the phone's map draws: a burpee's "cardiovascular system" is no row on the watch either.
 const musclesFor = e => {
   let m = {}
-  try { m = loadOf([{ id: e.id, ex: e.exercise || e, sets: 1 }]) } catch { m = {} }
+  try { m = loadOf([{ id: e.id, ex: e.exercise || e, sets: 1 }], { includeNonStrength: true }) } catch { m = {} }
   const out = Object.fromEntries(Object.entries(m).filter(([k, w]) => w > 0 && (MUSCLES.includes(k) || k === 'deltoids')).map(([k, w]) => [k, Math.round(w * 100) / 100]))
   return Object.keys(out).length ? { muscles: out } : {}
 }

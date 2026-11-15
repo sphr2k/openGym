@@ -317,7 +317,7 @@ export function exerciseMuscleSnapshot(ex) {
  * times a single set. Volume in kg is deliberately not used: 100 kg of leg press
  * against 12 kg of lateral raise says nothing about which muscle worked harder.
  */
-export function loadOf(items) {
+export function loadOf(items, { includeNonStrength = false } = {}) {
   const load = {}
   items.forEach(item => {
     const { id, sets } = item || {}
@@ -326,7 +326,7 @@ export function loadOf(items) {
     const source = historical?.muscleWeights ? historical : (EXIDX[id] || historical || item)
     // Stretching/cardio activities may describe the body region but do not count
     // towards hypertrophy effective sets, irrespective of stored history metadata.
-    if (!creditsStrengthSets(source) || !creditsStrengthSets(EXIDX[id])) return
+    if (!includeNonStrength && (!creditsStrengthSets(source) || !creditsStrengthSets(EXIDX[id]))) return
     const m = musclesOf(source)
     for (const slug in m) load[slug] = (load[slug] || 0) + m[slug] * sets
   })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { EXDB, EXIDX, smOf } from './exercises.js'
-import { muscleWeightsOf, musclesOf, loadOfWorkouts, sessionLoad, loadOfRoutine } from './muscles.js'
+import { muscleWeightsOf, musclesOf, loadOf, loadOfWorkouts, sessionLoad, loadOfRoutine } from './muscles.js'
 import { EXERCISE_SECONDARY_REMOVALS } from './exercise-muscle-overrides.js'
 import { workoutMuscleProfiles } from '../../../mcp/src/muscle-overlap.js'
 
@@ -37,6 +37,7 @@ describe('fork-local exercise muscle correction overlay', () => {
     expect(sessionLoad(work).planned).toEqual(expected)
     expect(loadOfRoutine({ex:work.map(x=>({id:x.id,sets:1}))})).toEqual(expected)
     expect(musclesOf(EXIDX['1167'])).toHaveProperty('chest',1) // anatomy still visible in exercise picker
+    expect(loadOf([{id:'1167',sets:1}],{includeNonStrength:true})).toHaveProperty('chest',1) // watch shows anatomy
     expect(loadOfWorkouts([{entries:[{id:'1297',sets:[{done:true,w:0,r:10}]}]}])).toHaveProperty('chest',1)
   })
 
