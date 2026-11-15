@@ -3,13 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "cf dev",
+    "dev": "cf dev --mode local",
     "build": "cf build",
     "test": "node --test test/*.test.mjs",
     "check": "npm run build && npm run test",
     "test:integration": "node test/local-worker.mjs",
-    "build:staging": "cf build --mode staging",
-    "deploy:staging": "cf deploy --mode staging"
+    "deploy": "cf deploy"
   },
   "dependencies": {
     "@simplewebauthn/server": "^13.3.3",

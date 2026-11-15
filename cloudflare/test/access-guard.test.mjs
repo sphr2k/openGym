@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import cfConfig from "../cloudflare.config.ts";
 import worker from "../src/index.js";
 
-test("staging fails closed when the secret binding is missing",async()=>{
+test("legacy access-key guard fails closed when the secret binding is missing",async()=>{
   for(const request of [
     new Request("https://staging.example/"),
     new Request("https://staging.example/api/health"),
@@ -14,7 +14,7 @@ test("staging fails closed when the secret binding is missing",async()=>{
   }
 });
 
-test("staging rejects incorrect credentials and serves API after correct key",async()=>{
+test("legacy access-key guard rejects incorrect credentials and serves API after correct key",async()=>{
   const env={STAGING_LOCKED:"true",STAGING_API_KEY:"synthetic-test-key",ALLOW_GUEST:"true"};
   const missing=await worker.fetch(new Request("https://staging.example/api/config"),env,{});
   assert.equal(missing.status,404);
@@ -25,37 +25,28 @@ test("staging rejects incorrect credentials and serves API after correct key",as
   assert.equal((await good.json()).allow_guest,true);
 });
 
-test("cf staging guards all assets, keeps account and profile DO namespaces, and never changes default target",()=>{
-  const stage=cfConfig({mode:"staging",isPreview:false}).worker;
-  const regular=cfConfig({mode:undefined,isPreview:false}).worker;
-  assert.equal(stage.assets.runWorkerFirst,true,
-    "all static assets must invoke the Access-aware Worker");
-  assert.equal(stage.env.STAGING_LOCKED,undefined,
-    "legacy header gate must not block browsers and iOS");
-  assert.equal(stage.name,"opengym-cloudflare-staging");
-  assert.equal(regular.name,"opengym-cloudflare");
-  assert.deepEqual(regular.assets.runWorkerFirst,["/api/*"]);
-  assert.deepEqual(stage.env.MEDIA,{type:"r2",name:"opengym-cloudflare-staging-media"});
-  assert.deepEqual(regular.env.MEDIA,{type:"r2",name:"opengym-media"});
+test("production target is OpenGym on its custom origin and preserves DO class names",()=>{
+  const prod=cfConfig({mode:undefined,isPreview:false}).worker;
+  assert.equal(prod.name,"opengym");
+  assert.equal(prod.workersDev,false);
+  assert.equal(prod.previewUrls,false);
+  assert.equal(prod.assets.runWorkerFirst,true);
+  assert.equal(prod.env.APP_ORIGIN.value,"https://opengym.janwerner.de");
+  assert.equal(prod.env.RP_ID.value,"opengym.janwerner.de");
+  assert.deepEqual(prod.env.MEDIA,{type:"r2",name:"opengym-cloudflare-staging-media"});
   for(const key of ["ACCOUNTS","PROFILES"]){
-    assert.equal(stage.env[key].type,"durable-object");
-    assert.equal(stage.env[key].worker,stage.name);
-    assert.equal(regular.env[key].worker,regular.name);
+    assert.equal(prod.env[key].worker,prod.name);
+    assert.equal(prod.env[key].exportName,key==="ACCOUNTS"?"AccountDO":"ProfileDO");
   }
-  assert.equal(stage.env.ACCOUNTS.exportName,"AccountDO");
-  assert.equal(stage.env.PROFILES.exportName,"ProfileDO");
-  assert.deepEqual(stage.exports.AccountDO,{type:"durable-object",storage:"sqlite"});
-  assert.deepEqual(stage.exports.ProfileDO,{type:"durable-object",storage:"sqlite"});
+  assert.deepEqual(prod.exports.AccountDO,{type:"durable-object",storage:"sqlite"});
+  assert.deepEqual(prod.exports.ProfileDO,{type:"durable-object",storage:"sqlite"});
 });
 
-test("staging binds the MCP hostname to the existing application Worker",()=>{
-  const stage=cfConfig({mode:"staging",isPreview:false}).worker;
-  const regular=cfConfig({mode:undefined,isPreview:false}).worker;
-  assert.equal(stage.env.MCP_HOSTNAME.value, "opengym-mcp.janw.eu");
-  assert.equal(regular.env.MCP_HOSTNAME, undefined);
-  assert.equal(stage.entrypoint, "./src/index.js");
-  assert.equal(stage.exports.AccountDO.storage, "sqlite");
-  assert.equal(stage.exports.ProfileDO.storage, "sqlite");
+test("the default Worker never routes deployments to the retired trial environment",()=>{
+  const prod=cfConfig({mode:undefined,isPreview:false}).worker;
+  assert.equal(prod.name,"opengym");
+  assert.equal(prod.env.ACCOUNTS.worker,"opengym");
+  assert.equal(prod.env.PROFILES.worker,"opengym");
 });
 
 test("the official Capacitor app can redeem a pairing code before it owns an openGym Bearer",async()=>{

@@ -20,14 +20,14 @@ This independently deployable Worker targets the **unmodified openGym iOS/Androi
 - Full local Wrangler/WebAuthn/paired-client integration test including R2 and account deletion
 - R2 orphan reconciliation: recover objects that landed before an interrupted SQLite commit;
   preserve referenced blobs and apply the existing grace period to unreferenced blobs; an alarm is persisted before R2 writes so interrupted uploads are revisited
-- Guarded Cloudflare staging Worker with independent R2 bucket and SQLite Durable Objects
+- Production Cloudflare Worker with SQLite Durable Objects and immutable R2 snapshots
 
 **Not production-ready:** Admin-issued recovery, admin dashboard, watch relay, push,
 AI coach, integration APIs, verified migration/backup tooling and full native app parity
 are not complete. Missing optional routes return HTTP 404. This is a restricted
-staging deployment, not a public user-facing release.
+production deployment.
 
-**Staging evidence:** A restricted private Cloudflare staging deployment has been exercised with its own R2 bucket, SQLite Durable Objects and the original frontend assets. Real native-device acceptance remains pending. Resource names, private hostnames and identity policies are intentionally omitted from reusable public deployment instructions.
+**Production deployment:** `opengym` is served through `https://opengym.janwerner.de`, protected by Cloudflare Access. The original SQLite Durable Object namespaces were transferred in place on 2026-11-15. Re-register a passkey for this new RP ID through the existing device-link flow; old passkeys remain scoped to the prior hostname.
 
 
 ## Profile storage: immutable R2 snapshots
@@ -81,20 +81,15 @@ one-shot conversion into R2 snapshots and SQLite pointers **before** this
 Worker is deployed ([#6](https://github.com/sphr2k/openGym/issues/6)).
 Code rollback does not automatically restore a previous storage format.
 
-## Cloudflare CLI modes
+## Production Cloudflare deployment
 
-Project configuration lives in cloudflare/cloudflare.config.ts. Use the new
-Cloudflare CLI (cf) for builds, development, and deployments. The generated
-wrangler.config.ts is only the internal bundler adapter.
+Project configuration lives in `cloudflare/cloudflare.config.ts`. Use the Cloudflare CLI (`cf`) for builds, development, and deployments. The generated `wrangler.config.ts` is only the internal bundler adapter.
 
-The default mode targets Worker opengym-cloudflare and R2 bucket
-opengym-media. Explicit --mode staging targets the guarded Worker
-opengym-cloudflare-staging and its separate staging R2 bucket. Each mode
-uses its own SQLite-backed AccountDO and ProfileDO namespaces. Staging sends
-ALL asset requests through the Worker, preserving its Access boundary.
+The only application deployment target is Worker `opengym`, with `APP_ORIGIN=https://opengym.janwerner.de` and `RP_ID=opengym.janwerner.de`. Deploy with `npm run deploy --prefix cloudflare` after building the frontend and staging media. No deployment mode is needed. The Worker serves assets via the Worker (`runWorkerFirst`) so its Cloudflare Access policy cannot be bypassed by assets. Disable the public `workers.dev` subdomain on this Worker.
 
-Use cf deploy --mode staging for the staging target, never the default
-deploy command. The cf dev server normally listens on port 8787.
+The R2 bucket name `opengym-cloudflare-staging-media` is retained **only** to preserve existing immutable snapshots and media. It is not a second application environment. Do not change that binding without migrating all objects and verifying a restore.
+
+The former Worker temporarily remains as a compatibility bridge for the existing MCP host and passkeys registered to the old hostname. It binds to the transferred `opengym` DO classes; it is no longer the primary application deployment target. Do not deploy it as a new application environment.
 
 ## Local development
 
@@ -216,43 +211,14 @@ GitHub Actions yourself.
 - Pairing requires a fresh WebAuthn assertion, not just a browser session. The one-use verification and code state live in AccountDO SQLite, not Worker memory.
 - The official phone holds the bearer token and polls /api/data/rev; it needs no new API library or mobile build.
 - The current integration fixture validates real WebAuthn registration and proof, iPhone pairing, two profile writes, stale write rejection and reload under cf dev.
-- **Still required before production**: real iOS end-to-end acceptance, independently verified backup/restore, optional/admin/watch/recovery routes and full security review.
+- **Operational acceptance outstanding**: real iOS end-to-end test on the new hostname, independently verified backup/restore, optional/admin/watch/recovery routes and a full security review. The prior passkey can be used on its original hostname to create a one-time link code (`Settings → Account → Add another device`); on `opengym.janwerner.de`, choose `I have a code` to register a new passkey against the migrated account.
 
 The source-repository [Issues](https://github.com/sphr2k/openGym/issues) and relevant PRs are the authoritative acceptance backlog. Do not create parallel specifications or silently switch the client to a different sync protocol.
 
-## Unified read-only MCP endpoint (staging)
+## Existing read-only MCP endpoint
 
-OpenGym staging and its read-only MCP share **one Worker deployment** and its
-existing AccountDO, ProfileDO and R2 storage. The two public hostnames are
-intentionally distinct:
+`opengym-mcp.janw.eu` remains available via a temporary compatibility Worker, with its existing token, and accesses the **same** AccountDO and ProfileDO namespaces now owned by `opengym`. It does not duplicate workout data. Its retirement requires migrating the MCP secret and hostname independently; do not remove this routing before updating the Portal upstream.
 
-- `opengym-cloudflare-staging.janwer.workers.dev` remains protected by its
-  existing Cloudflare Access browser/iOS policy. `/mcp` returns 404 here.
-- `opengym-mcp.janw.eu` is a **Custom Domain on the same Worker**. All paths
-  except `/mcp` return 404, including `/`, `/api/*`, and browser registration.
-  `/mcp` requires the 32-byte random `MCP_UPSTREAM_TOKEN` secret. Cloudflare
-  MCP Portal checks user OAuth/Access before sending that bearer to the Worker.
+## Continuous deployments
 
-The MCP endpoint is read-only; it exposes the ten existing MCP read tools, but
-never `log_workout`. It fails closed if there is not exactly one active profile.
-The custom domain is attached as Cloudflare account configuration; avoid applying
-browser Access policies to this MCP hostname (the portal cannot complete those
-interactive Access challenges). Protect `/mcp` with its bearer instead.
-
-For the initial migration, deploy the merged app once with
-`cd cloudflare && cf deploy --mode staging --secrets-file /private/mcp-secret.json`
-(using an `MCP_UPSTREAM_TOKEN` key), and attach the Custom Domain to the
-existing staging Worker. Rotate the Portal upstream's credential to match and
-synchronize MCP capabilities. Do not put the bearer in Git or a CLI argument.
-
-**Automatic Builds:** the `opengym-cloudflare-staging` Workers Builds project
-watches `main` on `sphr2k/openGym`, with repository root `/` and:
-
-~~~text
-Build:   bash scripts/cloudflare-staging-build.sh
-Deploy:  npm run deploy:staging --prefix cloudflare
-~~~
-
-Only this one Worker deploy runs; the default `opengym-cloudflare` target is
-unaffected. The staging app's web assets and exercise media are rebuilt from the
-same commit and the MCP endpoint goes live together with them.
+The production build entrypoint is `scripts/cloudflare-build.sh` with the deploy command `npm run deploy --prefix cloudflare`. Configure Workers Builds for Worker `opengym` only. Do not re-enable a second staging deployment.
