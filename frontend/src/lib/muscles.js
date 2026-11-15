@@ -15,6 +15,7 @@
 
 import { isWarmupRow } from './workout-model.js'
 import { EXIDX, smOf, isBuiltinEx } from './exercises.js'
+import { creditsStrengthSets } from './exercise-muscle-overrides.js'
 import { todayISO, weekKey, MONDAY } from './format.js'
 import { queueOf } from './queue.js'
 import { workoutAt } from './history.js'
@@ -316,13 +317,16 @@ export function exerciseMuscleSnapshot(ex) {
  * times a single set. Volume in kg is deliberately not used: 100 kg of leg press
  * against 12 kg of lateral raise says nothing about which muscle worked harder.
  */
-export function loadOf(items) {
+export function loadOf(items, { includeNonStrength = false } = {}) {
   const load = {}
   items.forEach(item => {
     const { id, sets } = item || {}
     if (!sets) return
     const historical = item.ex || item.exercise
     const source = historical?.muscleWeights ? historical : (EXIDX[id] || historical || item)
+    // Stretching/cardio activities may describe the body region but do not count
+    // towards hypertrophy effective sets, irrespective of stored history metadata.
+    if (!includeNonStrength && (!creditsStrengthSets(source) || !creditsStrengthSets(EXIDX[id]))) return
     const m = musclesOf(source)
     for (const slug in m) load[slug] = (load[slug] || 0) + m[slug] * sets
   })
