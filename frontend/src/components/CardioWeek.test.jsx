@@ -12,6 +12,7 @@ vi.mock('../store/useStore.js', () => ({
 vi.mock('../store/useUI.js', () => ({ useUI: { getState: () => ({ openSheet: () => {} }) } }))
 
 import CardioWeekCard, { GoalSheet } from './CardioWeek.jsx'
+import { todayISO } from '../lib/format.js'
 import { cardioGoalsOf } from '../lib/cardio-goals.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -23,7 +24,7 @@ function render(el) {
   root = createRoot(host)
   act(() => root.render(el))
 }
-const today = new Date().toISOString().slice(0, 10)
+const today = todayISO()
 const run = (min, km) => ({ id: 'w' + min, d: today, start: Date.now() - 3600e3, end: Date.now(), entries: [{ id: '0685', sets: [{ min, km, done: true }] }] })
 const click = el => act(() => el.dispatchEvent(new MouseEvent('click', { bubbles: true })))
 const button = text => [...host.querySelectorAll('button')].find(b => b.textContent.trim() === text)

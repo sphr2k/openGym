@@ -52,8 +52,9 @@ describe('no theme code in the main bundle', () => {
 })
 
 describe('fetched only while a theme shows', () => {
-  let host, root
+  let host, root, loadedBefore, xmasBefore
   beforeEach(() => {
+    loadedBefore = st.loaded; xmasBefore = st.xmas
     vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date(2026, 9, 25, 12))
     host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host)
   })
@@ -64,7 +65,7 @@ describe('fetched only while a theme shows', () => {
     const { SeasonalLayer, SeasonDeco } = await import('./Seasonal.jsx')
     await act(async () => root.render(<><SeasonalLayer /><SeasonDeco spot="home-hero" /></>))
     expect(host.innerHTML).toBe('')
-    expect(st.loaded).toBe(0)
+    expect(st.loaded).toBe(loadedBefore)
     expect(document.documentElement.dataset.season).toBeUndefined()
   })
 
@@ -73,7 +74,7 @@ describe('fetched only while a theme shows', () => {
     const { SeasonDeco } = await import('./Seasonal.jsx')
     await act(async () => root.render(<SeasonDeco spot="workout-hdr" workout />))
     expect(host.innerHTML).toBe('')
-    expect(st.loaded).toBe(0)
+    expect(st.loaded).toBe(loadedBefore)
   })
 
   it('out of season on Auto: the same', async () => {
@@ -82,8 +83,8 @@ describe('fetched only while a theme shows', () => {
     const { SeasonalLayer } = await import('./Seasonal.jsx')
     await act(async () => root.render(<SeasonalLayer />))
     expect(host.innerHTML).toBe('')
-    expect(st.loaded).toBe(0)
-    expect(st.xmas).toBe(0)
+    expect(st.loaded).toBe(loadedBefore)
+    expect(st.xmas).toBe(xmasBefore)
   })
 
   it('on: the module comes in and draws its spots', async () => {

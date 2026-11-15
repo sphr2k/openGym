@@ -4,7 +4,7 @@
 import React, { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRoot } from 'react-dom/client'
-import { useStore } from '../store/useStore.js'
+import { DEF, useStore } from '../store/useStore.js'
 import { presetModules } from '../lib/modules.js'
 import Home from './Home.jsx'
 
@@ -26,7 +26,7 @@ afterEach(() => { act(() => root.unmount()); host.remove() })
 const today = new Date().toISOString().slice(0, 10)
 const mountWith = (modules, extra = {}) => {
   useStore.setState(s => ({
-    S: { ...s.S, routines: [{ id: 'r1', name: 'Push', ex: [] }], workouts: [{ id: 'w1', d: today, start: Date.now() - 4e6, end: Date.now() - 3e6, entries: [] }],
+    S: { ...structuredClone(DEF), routines: [{ id: 'r1', name: 'Push', ex: [] }], workouts: [{ id: 'w1', d: today, start: Date.now() - 4e6, end: Date.now() - 3e6, entries: [] }],
       bodyweight: [{ d: today, w: 80, t: Date.now() }], dayPlan: {}, week: {}, active: null, modules, homeMuscleSets: false, ...extra },
     user: null,
   }))
