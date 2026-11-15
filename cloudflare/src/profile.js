@@ -46,8 +46,8 @@ export class ProfileDO {
 
   // Called only inside the successful profile pointer transaction. In particular, a
   // rejected 409 must never publish a stale active session.
-  writeLive(deviceId, active, updatedAt) {
-    if (typeof deviceId !== "string" || !LIVE_DEVICE_RE.test(deviceId)) return;
+  writeLive(deviceId, active, updatedAt, legacy = false) {
+    if (typeof deviceId !== "string" || !(legacy ? /^legacy:.{1,128}$/.test(deviceId) : LIVE_DEVICE_RE.test(deviceId))) return;
     const now = Date.now();
     this.sql.exec("DELETE FROM mcp_live_workouts WHERE synced_at < ?", now - LIVE_TTL_MS);
     if (!active) {
@@ -59,6 +59,24 @@ export class ProfileDO {
     if (new TextEncoder().encode(payload).length > LIVE_MAX_BYTES) return;
     this.sql.exec("INSERT INTO mcp_live_workouts(device_id,updated_at,synced_at,payload) VALUES (?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET updated_at=excluded.updated_at,synced_at=excluded.synced_at,payload=excluded.payload",
       deviceId, Number.isFinite(updatedAt) && updatedAt > 0 ? updatedAt : now, now, payload);
+  }
+
+  // Older iOS clients already send state.active, but have no liveDeviceId.
+  // Use the session ID as a legacy-only key. Never add it to the canonical profile.
+  // A missing active field cannot identify a device, so it must not clear another
+  // device's snapshot. Completed workouts supersede matching live snapshots.
+  writeLegacyLive(body) {
+    const active = body.state?.active;
+    if (validLive(active)) this.writeLive(`legacy:${active.id}`, active, body.state?._ts, true);
+  }
+
+  clearCompletedLive(workouts) {
+    const completed = new Set((workouts || []).map(w => w?.id).filter(Boolean));
+    if (!completed.size) return;
+    for (const row of this.sql.exec("SELECT device_id,payload FROM mcp_live_workouts").toArray()) {
+      if (completed.has(JSON.parse(row.payload).id))
+        this.sql.exec("DELETE FROM mcp_live_workouts WHERE device_id=?", row.device_id);
+    }
   }
 
   readLive() {
@@ -121,9 +139,13 @@ export class ProfileDO {
           if(this.mediaSweepRunning) return "maintenance";
           if(!this.store.commit(baseline,next,snapshot)) return "conflict";
           noteReferences(this,next);
-          // active itself remains device-local. Snapshot it only for clients that
-          // explicitly identify their device; older clients preserve prior behavior.
-          this.writeLive(body.liveDeviceId, body.state?.active, body.state?._ts);
+          // Preserve the device-local model. Modern clients use a device key;
+          // legacy clients can publish the active state already in their PUT.
+          if (LIVE_DEVICE_RE.test(body.liveDeviceId || ""))
+            this.writeLive(body.liveDeviceId, body.state?.active, body.state?._ts);
+          else this.writeLegacyLive(body);
+          // A finalized session must not continue to appear as live.
+          this.clearCompletedLive(body.state?.workouts);
           return "committed";
         });
       }catch(err) {

@@ -131,3 +131,24 @@ test("legacy clients cannot clobber live sessions; account deletion purges snaps
   assert.equal((await view()).status,410);
   assert.equal(profile.sql.exec("SELECT count(*) AS n FROM mcp_live_workouts").toArray()[0].n,0);
 });
+
+
+test("legacy iOS clients publish active workouts without liveDeviceId and finish safely", async () => {
+  const {profile}=fixture();
+  const active={id:"legacy-workout",d:"2026-11-15",start:Date.now(),entries:[{id:"2291",sets:[{w:70,r:10,done:true}]}]};
+  const sync=(state,rev)=>profile.fetch(req("PUT",{state,baseRev:rev,stamped:true}));
+  assert.equal((await sync({workouts:[],routines:[],active},0)).status,200);
+  const live=async()=> (await (await profile.fetch(new Request("https://example.test/_internal/mcp-live-workouts"))).json()).workouts;
+  assert.equal((await live())[0].id,"legacy-workout");
+  assert.equal((await (await profile.fetch(req("GET"))).json()).state.active,undefined);
+  // An unrelated legacy device cannot erase a running session.
+  assert.equal((await sync({workouts:[],routines:[]},1)).status,200);
+  assert.equal((await live()).length,1);
+  // Rejected/conflicting writes never publish stale snapshots.
+  const stale={...active,id:"incorrect"};
+  assert.equal((await sync({workouts:[],routines:[],active:stale},0)).status,409);
+  assert.equal((await live()).length,1);
+  // Completed canonical history clears the live projection.
+  assert.equal((await sync({workouts:[active],routines:[],active:null},2)).status,200);
+  assert.deepEqual(await live(),[]);
+});
