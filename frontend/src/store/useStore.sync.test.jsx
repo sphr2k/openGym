@@ -29,6 +29,9 @@ beforeEach(() => {
   useStore.setState({ S: clone(DEF), user: null, ready: false })
 })
 afterEach(() => {
+  // Reset the sync session too: bare setState leaves debounced pushes and
+  // in-flight flags from this test alive for the next shuffled test.
+  useStore.getState().setUser(null)
   vi.useRealTimers()
   localStorage.clear()
   useStore.setState({ S: clone(DEF), user: null, ready: false })
