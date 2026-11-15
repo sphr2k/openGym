@@ -331,3 +331,14 @@ a laptop and fails under `CI`). The workout it builds is tested in
 ## License
 
 AGPL-3.0-or-later, same as openGym.
+
+
+### Live workouts on Cloudflare MCP
+
+The Cloudflare client publishes a per-device snapshot of its active session through the existing authenticated profile sync, normally around 1.5 seconds after a change. The profile Durable Object keeps that snapshot in a separate SQLite table; the active session remains device-local and is never merged into the canonical profile.
+
+Both list_workouts and get_workout expose completed and running workouts. get_workout with no parameters chooses a fresh running session if one exists, otherwise the latest completed session. Use status=in_progress or workout_id to select a specific live session. A running session includes open sets with done=false, and existing set-timeline and fatigue estimates use only completed work.
+
+Live data includes updated_at, synced_at and stale. A snapshot is marked stale after five minutes and expires after 24 hours. It disappears on the next successful sync after the workout is finished or discarded. If a client goes offline or signs out, the server may retain a stale snapshot until expiry. Account deletion removes all snapshots.
+
+The MCP tools are read-only: they cannot modify an ongoing workout.

@@ -346,6 +346,7 @@ export async function deleteAllProfileData(p){
   await p.store.sweep(true);
   p.ctx.storage.transactionSync(()=>{
     p.sql.exec("DELETE FROM media_files");
+    p.sql.exec("DELETE FROM mcp_live_workouts");
     p.store.clear();
   });
   await scheduleGarbageCollection(p);

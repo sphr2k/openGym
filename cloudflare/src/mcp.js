@@ -57,7 +57,12 @@ export async function handleMcp(request, env) {
     if (!profile.ok) return failure('MCP profile unavailable', 503)
     const {state} = await profile.json()
     if (!state || typeof state !== 'object') return failure('MCP profile unavailable', 503)
-    response = await withRemoteState(state, () => handler(request, env))
+    // Internal DO route is unavailable on the public app hostname. Fail closed
+    // if the live view cannot be read rather than returning an incomplete list.
+    const live = await env.PROFILES.getByName('profile:' + id).fetch(new Request(new URL('/_internal/mcp-live-workouts', request.url)))
+    if (!live.ok) return failure('MCP live view unavailable', 503)
+    const {workouts} = await live.json()
+    response = await withRemoteState({...state, _liveWorkouts:Array.isArray(workouts)?workouts:[]}, () => handler(request, env))
   } catch (err) {
     console.error('MCP internal request failed:', err?.name || 'error')
     return failure('MCP unavailable', 503)

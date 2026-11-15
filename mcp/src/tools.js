@@ -332,10 +332,37 @@ export const getWeekPlan = {
   }
 }
 
+// Live sessions are a distinct DO projection, not part of S.workouts or any
+// progression/history calculation. Prefer a completed workout with the same ID:
+// the client may have finished while another snapshot was in flight.
+const LIVE_TTL_MS = 24 * 60 * 60 * 1000
+const LIVE_STALE_MS = 5 * 60 * 1000
+function workoutViews(S) {
+  const done = (S.workouts || []).map(workout => ({workout, status:'completed'}))
+  const completedIds = new Set(done.map(x => x.workout.id).filter(Boolean))
+  const byId = new Map()
+  for (const w of (S._liveWorkouts || [])) {
+    if (!w || typeof w.id !== 'string' || !Array.isArray(w.entries) ||
+      !Number.isFinite(w.synced_at) || Date.now() - w.synced_at >= LIVE_TTL_MS ||
+      completedIds.has(w.id)) continue
+    const prior = byId.get(w.id)
+    if (!prior || w.synced_at > prior.synced_at) byId.set(w.id, w)
+  }
+  const live = [...byId.values()].map(workout => ({workout, status:'in_progress'}))
+  return [...live, ...done].sort((a,b) =>
+    (b.workout.d || '').localeCompare(a.workout.d || '') ||
+    (b.workout.synced_at || b.workout.start || 0) - (a.workout.synced_at || a.workout.start || 0))
+}
+const snapshotFields = (w, status) => status === 'in_progress'
+  ? {updated_at: new Date(Number.isFinite(w.updated_at) ? w.updated_at : w.synced_at).toISOString(),
+     synced_at: new Date(w.synced_at).toISOString(),
+     stale: Date.now() - w.synced_at > LIVE_STALE_MS}
+  : {}
+
 /** list_workouts — newest-first summary of recent sessions. */
 export const listWorkouts = {
   name: 'list_workouts',
-  description: 'List recent finished workouts, newest first. Each item summarises the date, exercise count, sets done / planned, total volume (in the user\'s unit), duration and whether PRs were set. Use this before drilling into a specific date with get_workout.',
+  description: 'List recent running and completed workouts, newest first. Running sessions include checked-off and pending sets, a freshness timestamp and stale flag. Use get_workout for full set detail.',
   schema: {
     from: isoDate().optional().describe('Inclusive start date YYYY-MM-DD. Defaults to no lower bound (list most recent).'),
     to: isoDate().optional().describe('Inclusive end date YYYY-MM-DD. Defaults to today.'),
@@ -347,9 +374,12 @@ export const listWorkouts = {
     const lim = Math.min(Math.max(limit || 25, 1), 200)
     // `to` is documented as defaulting to today, and had no default at all. A row dated in the
     // future — another device with a wrong clock — was listed first as the most recent session.
-    const hi = to || todayIso()
-    const all = (S.workouts || []).slice().sort((a, b) => (b.d || '').localeCompare(a.d || ''))
-    const matching = all.filter(w => {
+    const all = workoutViews(S)
+    // At local midnight the worker's UTC day can still be yesterday. Never
+    // hide a running session simply because its client is one date ahead.
+    const activeDay = all.filter(x => x.status === 'in_progress').map(x => x.workout.d).sort().at(-1)
+    const hi = to || (activeDay && activeDay > todayIso() ? activeDay : todayIso())
+    const matching = all.filter(({workout:w}) => {
       if (from && w.d < from) return false
       if (w.d > hi) return false
       return true
@@ -365,13 +395,15 @@ export const listWorkouts = {
       matching_count: matching.length,
       returned_count: filtered.length,
       truncated: filtered.length < matching.length,
-      workouts: filtered.map(w => ({
+      workouts: filtered.map(({workout:w, status}) => ({
+        status,
+        ...snapshotFields(w, status),
         // The only thing that identifies a session uniquely. Two workouts on one day is
         // ordinary — a lifting session and an evening run — and without an id here the second
         // one cannot be asked about at all.
         id: w.id || null,
         date: w.d,
-        routine_id: w.routineId || null,
+        routine_id: w.routineId || w.routineIds?.[0] || null,
         routine_name: w.name || null,
         exercise_count: (w.entries || []).length,
         sets_done: setsDone(w),
@@ -395,43 +427,49 @@ const gymOf = w => (w && w.gym && typeof w.gym === 'object' && String(w.gym.name
 /** get_workout — full entry/set breakdown for one date. */
 export const getWorkout = {
   name: 'get_workout',
-  description: 'Get workout sets, real check-off timestamps, canonical per-exercise muscle_weights (OpenGym muscle model), and a chronological set_timeline showing last work affecting the same muscles and overlapping exercises between two same-exercise sets. Estimated intervals and muscle loads are model descriptors, NOT measured muscle recovery.  Estimated_set_duration_sec, estimated_idle_before_sec (passive time before this set), estimated_same_exercise_recovery_sec (time since prior same-exercise finish minus this set duration, INCLUDES intervening exercises), and estimated_passive_since_previous_same_exercise_sec (subtracts intervening work) are modelled using seconds_per_rep (default 3), with scenario ranges. Neither is actual measured rest or local muscle recovery. Intervals require all completed sets timestamped; timed/cardio and complex sets have no tempo estimate. Identify by workout_id or date; call list_workouts first.',
+  description: 'Get running or completed workouts using the same set schema. With no arguments, prefer a fresh running workout, otherwise the most recent completed workout; stale live workouts remain addressable by id/status. Use workout_id, date or status to select; live snapshots include synced_at and stale. Get workout sets, real check-off timestamps, canonical per-exercise muscle_weights (OpenGym muscle model), and a chronological set_timeline showing last work affecting the same muscles and overlapping exercises between two same-exercise sets. Estimated intervals and muscle loads are model descriptors, NOT measured muscle recovery.  Estimated_set_duration_sec, estimated_idle_before_sec (passive time before this set), estimated_same_exercise_recovery_sec (time since prior same-exercise finish minus this set duration, INCLUDES intervening exercises), and estimated_passive_since_previous_same_exercise_sec (subtracts intervening work) are modelled using seconds_per_rep (default 3), with scenario ranges. Neither is actual measured rest or local muscle recovery. Intervals require all completed sets timestamped; timed/cardio and complex sets have no tempo estimate. Identify by workout_id or date; call list_workouts first.',
   schema: {
     date: isoDate().optional().describe('The workout date as YYYY-MM-DD. If two sessions share that date, the answer lists them instead and asks for a workout_id.'),
     workout_id: z.string().min(1).optional().describe('The id from list_workouts. Preferred: it names one session even on a day with two.'),
+    status: z.enum(['in_progress','completed']).optional().describe('Restrict selection to a running or completed workout.'),
     seconds_per_rep: z.number().min(1).max(8).optional().describe('Assumed average duration in seconds per repetition for model-based passive-rest and same-exercise recovery estimates. Defaults to 3; scenario range is +/- 1 second per rep, NOT statistical confidence.')
   },
-  handler: ({ date, workout_id, seconds_per_rep }) => {
+  handler: ({ date, workout_id, status, seconds_per_rep }) => {
     const S = getState()
     if (!S) return noState()
-    const workouts = S.workouts || []
-    let w
+    const views = workoutViews(S).filter(x => !status || x.status === status)
+    // A date-less lookup should not pick a future-dated completed workout.
+    const recent = views.filter(x => x.workout.d <= todayIso())
+    let selected
     if (workout_id) {
-      w = workouts.find(x => x.id === workout_id)
-      if (!w) { const e = new Error(`no workout with id ${workout_id}`); e.code = 'ENOENT'; throw e }
-    } else if (date) {
-      const sameDay = workouts.filter(x => x.d === date)
-      if (!sameDay.length) { const e = new Error(`no workout on ${date}`); e.code = 'ENOENT'; throw e }
-      // Answering with the first of two is how a question about the evening run gets the
-      // morning's lifting numbers, stated with total confidence. Say there are two instead.
-      if (sameDay.length > 1) {
-        return {
-          ambiguous: true,
-          date,
-          message: `${sameDay.length} workouts were logged on ${date} — call get_workout again with one of these workout_id values.`,
-          workouts: sameDay.map(x => ({
-            id: x.id || null,
-            routine_name: x.name || null,
-            sets_done: setsDone(x),
-            volume: workoutVolume(x),
-            duration: x.end && x.start ? friendlyDuration(x.end - x.start) : null
-          }))
-        }
-      }
-      w = sameDay[0]
+      selected = views.find(x => x.workout.id === workout_id)
+      if (!selected) { const e = new Error(`no workout with id ${workout_id}`); e.code = 'ENOENT'; throw e }
     } else {
-      const e = new Error('get_workout needs either workout_id or date'); e.code = 'EINVAL'; throw e
+      // A running workout might have tomorrow's local date while the worker
+      // still runs on UTC yesterday. Freshness, not server-local date, wins.
+      const fresh = views.filter(x => x.status === 'in_progress' && Date.now() - x.workout.synced_at <= LIVE_STALE_MS)
+      const completed = recent.filter(x => x.status === 'completed')
+      const matching = date ? views.filter(x => x.workout.d === date) :
+        status === 'in_progress' ? views :
+        status === 'completed' ? completed.slice(0, 1) :
+        fresh.length ? fresh : completed.length ? completed.slice(0, 1) : views.slice(0, 1)
+      if (!matching.length) {
+        const e = new Error(date ? `no workout on ${date}` : 'no workout found')
+        e.code = 'ENOENT'; throw e
+      }
+      if (matching.length > 1) return {
+        ambiguous:true, ...(date ? {date} : {}),
+        message:`${matching.length} workouts match — call get_workout with one of these workout_id values.`,
+        workouts:matching.map(({workout:w,status:state}) => ({
+          id:w.id || null, status:state, ...snapshotFields(w,state),
+          routine_name:w.name || null, sets_done:setsDone(w),
+          volume:workoutVolume(w),
+          duration:w.end && w.start ? friendlyDuration(w.end-w.start) : null
+        }))
+      }
+      selected = matching[0]
     }
+    const {workout:w, status:state} = selected
     const tempo = seconds_per_rep ?? DEFAULT_SECONDS_PER_REP
     const profiles = workoutMuscleProfiles(w.entries || [], S)
     const entries = (w.entries || []).map((e, i) => ({ ...entryView(e, S, tempo), ...profiles[i] }))
@@ -452,8 +490,10 @@ export const getWorkout = {
     }
     return {
       id: w.id || null,
+      status: state,
+      ...snapshotFields(w,state),
       date: w.d,
-      routine_id: w.routineId || null,
+      routine_id: w.routineId || w.routineIds?.[0] || null,
       routine_name: w.name || null,
       unit: S.unit || 'kg',
       bodyweight_at_workout: w.bw || null,
