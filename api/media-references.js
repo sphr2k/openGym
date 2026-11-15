@@ -40,5 +40,8 @@ export function referencedHashes(state) {
   // Progress photos filed under a day rather than a workout (frontend lib/day-photos.js):
   // dayPhotos[<hash>] = { d, m, _ts }, a cleared one only { _ts }.
   if (isObj(state.dayPhotos)) for (const e of Object.values(state.dayPhotos)) if (isObj(e) && isObj(e.m)) ref(e.m);
+  for (const e of Array.isArray(state.sounds) ? state.sounds : []) if (isObj(e) && isObj(e.m)) ref(e.m);
+  if (isObj(state.exMedia)) for (const e of Object.values(state.exMedia)) if (isObj(e) && isObj(e.m)) ref(e.m);
+  if (isObj(state.avatar) && isObj(state.avatar.m)) ref(state.avatar.m);
   return out;
 }

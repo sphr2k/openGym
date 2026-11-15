@@ -19,10 +19,14 @@ const httpError = status => Object.assign(new Error('HTTP ' + status), { status 
 beforeEach(() => {
   localStorage.clear()
   api.mockReset()
+  toast.mockClear()
   useStore.setState({ S: clone(DEF), user: null, ready: false })
 })
 
 afterEach(() => {
+  // A quota-refusal test leaves the store's persistence marker behind; a real
+  // successful save ends that streak before the next test starts its own copy.
+  useStore.getState().update(() => {}, false)
   localStorage.clear()
   useStore.setState({ S: clone(DEF), user: null, ready: false })
 })

@@ -25,18 +25,18 @@ describe('OpenGym muscle-metadata based set overlap',()=>{
     const original = JSON.stringify(entries)
     const {profiles,timeline:t,model} = run(entries,[[0,0,120],[1,0,240],[0,1,360]])
     expect(model).toMatchObject({available:true,completed_set_count:3,timestamped_set_count:3,mapped_work_set_count:3})
-    expect(profiles[0]).toMatchObject({muscle_source:'catalogue',muscle_weights:{'upper-back':1,biceps:0.4,forearm:0.4},primary_muscles:['upper-back']})
-    expect(profiles[1].muscle_weights).toEqual({'upper-back':1,biceps:0.4})
-    expect(t[1].latest_overlapping_set).toMatchObject({exercise_id:'2291',shared_muscles:['upper-back','biceps']})
-    expect(t[2].latest_overlapping_set).toMatchObject({exercise_id:'2661',shared_muscles:['upper-back','biceps']})
+    expect(profiles[0]).toMatchObject({muscle_source:'catalogue',muscle_weights:{lats:1,'upper-back':0.4,biceps:0.4,forearm:0.4},primary_muscles:['lats']})
+    expect(profiles[1].muscle_weights).toEqual({lats:0.4,'upper-back':1,biceps:0.4})
+    expect(t[1].latest_overlapping_set).toMatchObject({exercise_id:'2291',shared_muscles:['lats','upper-back','biceps']})
+    expect(t[2].latest_overlapping_set).toMatchObject({exercise_id:'2661',shared_muscles:['lats','upper-back','biceps']})
     expect(t[2].last_work_by_muscle['upper-back'].elapsed_since_completion_sec).toBe(120)
     expect(t[2].last_work_by_muscle['upper-back'].estimated_sec_until_current_set_start).toBe(87)
     expect(t[2].last_work_by_muscle.forearm.exercise_id).toBe('2291')
     expect(t[2]).toMatchObject({
       intervening_overlapping_set_count:1,
-      intervening_overlapping_sets:[{exercise_id:'2661',set_number:1,shared_muscles:['upper-back','biceps']}],
-      intervening_muscle_load:{'upper-back':1,biceps:0.4},
-      intervening_muscle_set_counts:{'upper-back':1,biceps:1},
+      intervening_overlapping_sets:[{exercise_id:'2661',set_number:1,shared_muscles:['lats','upper-back','biceps']}],
+      intervening_muscle_load:{lats:0.4,'upper-back':1,biceps:0.4},
+      intervening_muscle_set_counts:{lats:1,'upper-back':1,biceps:1},
     })
     expect(JSON.stringify(entries)).toBe(original) // pure / no profile leakage
   })
@@ -86,7 +86,7 @@ describe('OpenGym muscle-metadata based set overlap',()=>{
   test('incomplete timestamp history disables chronological assertions but keeps exercise metadata',()=>{
     const entries=[{id:'2291',sets:[log(10,60),{done:true,r:8,w:60}]},{id:'2661',sets:[log(10,120)]}]
     const {profiles,timeline:t,model} = run(entries,[[0,0,60],[1,0,120]])
-    expect(profiles[0].muscle_weights).toHaveProperty('upper-back',1)
+    expect(profiles[0].muscle_weights).toHaveProperty('upper-back',0.4)
     expect(model.available).toBe(false)
     expect(t.every(e=>e.muscle_overlap_unavailable==='incomplete_set_timestamps')).toBe(true)
     expect(t[1]).not.toHaveProperty('last_work_by_muscle')
